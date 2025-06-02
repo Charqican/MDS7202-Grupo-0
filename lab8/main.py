@@ -2,9 +2,17 @@ from fastapi import FastAPI
 from pydantic import BaseModel
 import pickle
 import numpy as np
+import os
+
+
+CURRENT_WORK_DIRECTORY = os.getcwd()
+DATA_DIRECTORY_PATH = os.path.join(CURRENT_WORK_DIRECTORY, "data")
+PLOT_DIRECTORY = os.path.join(CURRENT_WORK_DIRECTORY, "plots")
+MODEL_DIRECTORY = os.path.join(CURRENT_WORK_DIRECTORY, 'models')
+DATA_PATH = os.path.join(DATA_DIRECTORY_PATH, 'water_potability.csv')
 
 # Cargar el modelo
-with open("models/best_model.pkl", "rb") as f:
+with open(os.path.join(MODEL_DIRECTORY, "best_model.pkl"), "rb") as f:
     model = pickle.load(f)
 
 # (Opcional: si guardaste el preprocesador, puedes cargarlo igual)
