@@ -19,9 +19,15 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from optuna.visualization import plot_optimization_history, plot_param_importances
 
+CURRENT_WORK_DIRECTORY = os.getcwd()
+DATA_DIRECTORY_PATH = os.path.join(CURRENT_WORK_DIRECTORY, "data")
+PLOT_DIRECTORY = os.path.join(CURRENT_WORK_DIRECTORY, "plots")
+MODEL_DIRECTORY = os.path.join(CURRENT_WORK_DIRECTORY, 'models')
+DATA_PATH = os.path.join(DATA_DIRECTORY_PATH, 'water_potability.csv')
+
 # 1. Preparar datos
 def load_data():
-    df = pd.read_csv(r"C:\Users\lenovo\Desktop\Lab de progra\Lab1-githubcompartido\MDS7202-Grupo-0\lab8\water_potability.csv")
+    df = pd.read_csv(DATA_PATH)
     X = df.drop("Potability", axis=1)
     y = df["Potability"]
 
@@ -70,12 +76,12 @@ def objective(trial):
 
 # 3. Función principal
 def optimize_model():
-    global X_train, X_test, y_train, y_test  # para acceso desde objective()
+    global X_train, X_test, y_train, y_test, MODEL_DIRECTORY, PLOT_DIRECTORY  # para acceso desde objective()
     X_train, X_test, y_train, y_test, preprocessor = load_data()
 
-    # Crear carpetas
-    os.makedirs("plots", exist_ok=True)
-    os.makedirs("models", exist_ok=True)
+    # Crear carpetas si no existen
+    os.makedirs(PLOT_DIRECTORY, exist_ok=True)
+    os.makedirs(MODEL_DIRECTORY, exist_ok=True)
 
     experiment_name = "XGBoost Water Potability Optuna"
     mlflow.set_experiment(experiment_name)
@@ -86,10 +92,10 @@ def optimize_model():
 
     # Guardar gráficos de Optuna
     fig1 = plot_optimization_history(study)
-    fig1.write_image("plots/optimization_history.png")
+    fig1.write_image(os.path.join(PLOT_DIRECTORY, 'optimization_history.png'))
 
     fig2 = plot_param_importances(study)
-    fig2.write_image("plots/param_importances.png")
+    fig2.write_image(os.path.join(PLOT_DIRECTORY, 'param_importances.png'))
 
     # Obtener mejor modelo
     best_run_id = mlflow.search_runs(experiment.experiment_id).sort_values("metrics.valid_f1", ascending=False).iloc[0]["run_id"]
@@ -108,7 +114,7 @@ def optimize_model():
         sns.barplot(data=importance_df.sort_values("Importance", ascending=False), x="Importance", y="Feature")
         plt.title("Importancia de variables")
         plt.tight_layout()
-        plt.savefig("plots/feature_importances.png")
+        plt.savefig(os.path.join(PLOT_DIRECTORY, 'feature_importances.png'))
 
 # Esta función permite ejecutar optimize_model directamente con: python optimize.py
 if __name__ == "__main__":
