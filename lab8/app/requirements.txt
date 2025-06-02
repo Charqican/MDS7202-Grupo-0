@@ -1,0 +1,10 @@
+mlflow
+optuna
+xgboost
+scikit-learn
+fastapi
+uvicorn
+plotly
+matplotlib
+pandas
+numpy
