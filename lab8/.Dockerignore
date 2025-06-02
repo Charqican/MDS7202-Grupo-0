@@ -1,0 +1,5 @@
+plots/
+models/
+mlruns/
+__pycache__/
+*.pyc
