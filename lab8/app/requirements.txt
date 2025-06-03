@@ -8,3 +8,5 @@ plotly
 matplotlib
 pandas
 numpy
+seaborn
+pickle
