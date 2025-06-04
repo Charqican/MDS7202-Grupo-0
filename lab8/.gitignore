@@ -1,5 +1,4 @@
-/plots
-/mlruns
-/data
-/models
-/__pycache__
+/app/plots
+/app/mlruns
+/app/models
+*/__pycache__
