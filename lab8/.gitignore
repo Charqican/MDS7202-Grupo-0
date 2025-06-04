@@ -1,4 +1,4 @@
 /app/plots
 /app/mlruns
 /app/models
-*/__pycache__
+/__pycache__
