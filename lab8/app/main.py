@@ -1,5 +1,6 @@
 from fastapi import FastAPI
 from pydantic import BaseModel
+from optimize import optimize_model
 import pickle
 import numpy as np
 import os
@@ -10,6 +11,8 @@ DATA_DIRECTORY_PATH = os.path.join(CURRENT_WORK_DIRECTORY, "data")
 PLOT_DIRECTORY = os.path.join(CURRENT_WORK_DIRECTORY, "plots")
 MODEL_DIRECTORY = os.path.join(CURRENT_WORK_DIRECTORY, 'models')
 DATA_PATH = os.path.join(DATA_DIRECTORY_PATH, 'water_potability.csv')
+
+optimize_model()
 
 # Cargar el modelo
 with open(os.path.join(MODEL_DIRECTORY, "best_model.pkl"), "rb") as f:

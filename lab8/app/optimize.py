@@ -116,6 +116,4 @@ def optimize_model():
         plt.tight_layout()
         plt.savefig(os.path.join(PLOT_DIRECTORY, 'feature_importances.png'))
 
-# Esta función permite ejecutar optimize_model directamente con: python optimize.py
-if __name__ == "__main__":
-    optimize_model()
+    
