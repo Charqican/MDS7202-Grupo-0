@@ -1,0 +1,15 @@
+version: '3'
+
+services:
+  airflow:
+    build: .
+    container_name: airflow_hiring
+    ports:
+      - "8080:8080"
+    environment:
+      - AIRFLOW__CORE__LOAD_EXAMPLES=False
+    volumes:
+      - ./dags:/opt/airflow/dags
+      - ./plugins:/opt/airflow/plugins
+      #- ./data_1.csv:/opt/airflow/data_1.csv
+    command: bash -c "airflow db upgrade && airflow webserver & airflow scheduler"
