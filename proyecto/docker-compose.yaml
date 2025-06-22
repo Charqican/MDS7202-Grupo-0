@@ -1,4 +1,3 @@
-# docker-compose.yaml  (sin version:, usa el spec v2)
 services:
   airflow:
     build: .
@@ -6,19 +5,18 @@ services:
     restart: always
 
     ports:
-      - "8080:8080"         # UI Airflow
+      - "8080:8080"
 
     environment:
-      # no cargar DAGs de ejemplo y usar SQLite+SequentialExecutor
       AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
       AIRFLOW__CORE__EXECUTOR: SequentialExecutor
+      # (Opcional) Asegura que Python busque en /opt/airflow/scripts
+      PYTHONPATH: /opt/airflow/scripts
 
     volumes:
       - ./dags:/opt/airflow/dags:ro
       - ./data:/opt/airflow/data
       - ./logs:/opt/airflow/logs
+      - ./scripts:/opt/airflow/scripts:ro   # <--- monta aquí tu código
 
-    # el entrypoint maneja db init, scheduler y webserver
     command: []
-
-# no definas version: para evitar el warning
