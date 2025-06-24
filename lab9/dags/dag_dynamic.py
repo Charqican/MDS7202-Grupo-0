@@ -150,11 +150,10 @@ with DAG(dag_id='hiring_dynamic', start_date=datetime(2024, 10, 1), schedule_int
     start_pipeline >> create_dirs >> choose_branch
     choose_branch >> [download_data_1, download_both ] >> check_data_trigger
 
-    # Branching logic for check_data_trigger
-    check_data_trigger >> [merge, skip_processing] # Branch to merge or skip
+    # logica de branching
+    check_data_trigger >> [merge, skip_processing]
 
-    # If data is available, proceed with processing
+    # Entrenar en paralelo en caso de datos
     merge >> split >> [train_rf, train_gb, train_lr] >> evaluate
 
-    # All paths eventually lead to end_pipeline
     [evaluate, skip_processing] >> end_pipeline

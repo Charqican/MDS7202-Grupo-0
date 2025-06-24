@@ -11,5 +11,4 @@ services:
     volumes:
       - ./dags:/opt/airflow/dags
       - ./plugins:/opt/airflow/plugins
-      #- ./data_1.csv:/opt/airflow/data_1.csv
     command: bash -c "airflow db upgrade && airflow webserver & airflow scheduler"
