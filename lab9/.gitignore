@@ -1,0 +1,9 @@
+*zip
+*html
+*jpg
+*json
+/dags/*
+!/dags/dag_dynamic.py
+!/dags/dag_lineal.py
+!/dags/hiring_functions_dynamic.py
+!/dags/hiring_functions.py
