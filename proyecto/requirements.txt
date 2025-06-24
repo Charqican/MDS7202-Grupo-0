@@ -1,0 +1,6 @@
+virtualenv
+pandas
+matplotlib
+sns
+scikit-learn
+flask
