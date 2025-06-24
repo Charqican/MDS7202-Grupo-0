@@ -2,3 +2,5 @@
 /app/mlruns
 /app/models
 /__pycache__
+/mlruns
+files.zip
