@@ -10,3 +10,4 @@ pandas
 numpy
 seaborn
 kaleido
+virtualenv
