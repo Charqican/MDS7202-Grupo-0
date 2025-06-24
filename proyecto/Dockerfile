@@ -29,7 +29,6 @@ WORKDIR ${AIRFLOW_HOME}
 COPY --chown=airflow:airflow dags/    ${AIRFLOW_HOME}/dags/
 COPY --chown=airflow:airflow scripts/ ${AIRFLOW_HOME}/scripts/
 COPY --chown=airflow:airflow entrypoint.sh ${AIRFLOW_HOME}/entrypoint.sh
-# quita CR (\r) al final de cada línea y hazlo ejecutable
 RUN sed -i 's/\r$//' ${AIRFLOW_HOME}/entrypoint.sh \
     && chmod +x ${AIRFLOW_HOME}/entrypoint.sh
 ENTRYPOINT ["bash", "/opt/airflow/entrypoint.sh"]

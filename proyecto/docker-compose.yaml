@@ -1,4 +1,3 @@
-# docker-compose.yaml  (sin version:, usa el spec v2)
 services:
   airflow:
     build: .
@@ -20,5 +19,3 @@ services:
 
     # el entrypoint maneja db init, scheduler y webserver
     command: []
-
-# no definas version: para evitar el warning
