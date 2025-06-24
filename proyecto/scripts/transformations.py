@@ -1,5 +1,6 @@
 import os
 import pandas as pd
+from model import Batch 
 
 def get_dirs():
     """
@@ -192,38 +193,7 @@ def split_train_val_windows(dataset_path: str,
 
 
 
-# Batches (opcional reutilización)
-class Batch:
-    """
-    Divide datos en ventanas con stride para train/val.
-    """
-    def __init__(self, data: pd.DataFrame, time_window_in_weeks: int, stride: int, col: str='week_num'):
-        self.data = data.copy()
-        self.time_window = time_window_in_weeks
-        self.stride = stride
-        self.col = col
-        self._prepare()
-    def _prepare(self):
-        weeks = sorted(self.data[self.col].unique())
-        n = len(weeks)
-        self.weeks_batches = [weeks[i:i+self.time_window] for i in range(0, n-self.time_window+1, self.stride)]
-        rem = weeks[n-self.time_window+self.stride:]
-        if rem:
-            if len(rem)<=self.time_window//2:
-                self.weeks_batches[-1].extend(rem)
-            else:
-                self.weeks_batches.append(rem)
-    def get_train_eval_batch(self, i:int):
-        batch = self.weeks_batches[i]
-        split = self.time_window-self.stride
-        train = self.data[self.data[self.col].isin(batch[:split])]
-        val   = self.data[self.data[self.col].isin(batch[split:])]
-        return train, val
-    def get_test_batch(self, week:int): return self.data[self.data[self.col]==week]
-    def __len__(self): return len(self.weeks_batches)
-    def __getitem__(self,index:int): return self.get_train_eval_batch(index)
-    def __iter__(self):
-        for i in range(len(self)): yield self.get_train_eval_batch(i)
+
 
 
 if __name__ == '__main__':
