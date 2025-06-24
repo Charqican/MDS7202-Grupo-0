@@ -1,21 +1,50 @@
+version: '3.8'
+
 services:
-  airflow:
-    build: .
-    container_name: airflow_hiring
-    restart: always
-
-    ports:
-      - "8080:8080"         # UI Airflow
-
+  postgres:
+    image: postgres:15
     environment:
-      # no cargar DAGs de ejemplo y usar SQLite+SequentialExecutor
-      AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: airflow
+      POSTGRES_DB: airflow
+    volumes:
+      - postgres_db:/var/lib/postgresql/data
+
+  airflow-webserver:
+    image: apache/airflow:2.8.1-python3.10
+    restart: always
+    entrypoint: bash -c "airflow db migrate && airflow users create \
+      --username admin --firstname Admin --lastname User \
+      --role Admin --email admin@example.com --password admin || true && \
+      airflow webserver"
+    ports:
+      - "8080:8080"
+    environment:
       AIRFLOW__CORE__EXECUTOR: SequentialExecutor
+      AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
+      AIRFLOW__CORE__FERNET_KEY: ''
+      AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: 'false'
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres/airflow
 
     volumes:
-      - ./dags:/opt/airflow/dags:ro
-      - ./data:/opt/airflow/data
+      - ./dags:/opt/airflow/dags
       - ./logs:/opt/airflow/logs
+      - ./plugins:/opt/airflow/plugins
 
-    # el entrypoint maneja db init, scheduler y webserver
-    command: []
+  airflow-scheduler:
+    image: apache/airflow:2.8.1-python3.10
+    restart: always
+    depends_on:
+      - airflow-webserver
+    entrypoint: airflow scheduler
+    environment:
+      AIRFLOW__CORE__EXECUTOR: SequentialExecutor
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres/airflow
+
+    volumes:
+      - ./dags:/opt/airflow/dags
+      - ./logs:/opt/airflow/logs
+      - ./plugins:/opt/airflow/plugins
+  
+volumes:
+  postgres_db:
