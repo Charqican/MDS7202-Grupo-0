@@ -1,107 +1,461 @@
 import os
 import pandas as pd
-from model import Batch 
+from scripts.model import Batch 
+#
+#def get_dirs():
+#    """
+#    Determina rutas raw y processed según AIRFLOW_HOME.
+#    """
+#    #airflow_home = os.environ.get('AIRFLOW_HOME', '/opt/airflow')
+#    airflow_home = "./"
+#    raw_dir = os.path.join(airflow_home, 'data', 'raw')
+#    processed_dir = os.path.join(airflow_home, 'data', 'processed')
+#    return raw_dir, processed_dir
+#
+#
+#def extract_and_merge() -> str:
+#    """
+#    Lee Parquet de transacciones, clientes y productos, los fusiona
+#    y guarda merged.parquet en processed.
+#    """
+#    raw_dir, processed_dir = get_dirs()
+#    df_trans = pd.read_parquet(os.path.join(raw_dir, 'transacciones.parquet'))
+#    df_cli   = pd.read_parquet(os.path.join(raw_dir, 'clientes.parquet'))
+#    df_prod  = pd.read_parquet(os.path.join(raw_dir, 'productos.parquet'))
+#    df_merged = (
+#        df_trans
+#        .merge(df_cli, on='customer_id', how='left')
+#        .merge(df_prod, on='product_id', how='left')
+#    )
+#    os.makedirs(processed_dir, exist_ok=True)
+#    out_path = os.path.join(processed_dir, 'merged.parquet')
+#    df_merged.to_parquet(out_path, index=False)
+#    return out_path
+#
+#
+#def create_label() -> str:
+#    """
+#    Genera etiquetas semanales (0/1) y guarda labeled.parquet.
+#    """
+#    _, processed_dir = get_dirs()
+#    df = pd.read_parquet(processed_dir)
+#    # año-semana
+#    df['year_week'] = df['purchase_date'].dt.to_period('W').astype(str)
+#    # suma items por semana
+#    df_semanal = df.groupby(
+#        ['customer_id','product_id','year_week'], as_index=False
+#    ).agg(items_sum=('items','sum'))
+#    # combinaciones completas
+#    pares = df[['customer_id','product_id']].drop_duplicates()
+#    semanas = pd.Series(
+#        pd.date_range(df['purchase_date'].min(), df['purchase_date'].max(), freq='D')
+#        .to_period('W').unique().astype(str), name='year_week'
+#    )
+#    idx = pd.MultiIndex.from_product(
+#        [pares['customer_id'].unique(), pares['product_id'].unique(), semanas],
+#        names=['customer_id','product_id','year_week']
+#    )
+#    df_full = df_semanal.set_index(['customer_id','product_id','year_week']).reindex(idx, fill_value=0).reset_index()
+#    df_full['label'] = (df_full['items_sum']>0).astype(int)
+#    # renombrar semana
+#    week_map = {w: f'week_{i+1}' for i,w in enumerate(semanas)}
+#    df_full['year_week'] = df_full['year_week'].map(week_map)
+#    os.makedirs(processed_dir, exist_ok=True)
+#    out_path = os.path.join(processed_dir, 'labeled.parquet')
+#    df_full.to_parquet(out_path, index=False)
+#    return out_path
+#
+#
+#def create_label_new_data(merge_path: str, i: int) -> str:
+#    """
+#    Genera etiquetas (0/1) para un nuevo conjunto de datos, asignando un número
+#    de semana basado en el índice 'i' y guarda labeled_week_{i}.parquet.
+#
+#    Args:
+#        merge_path (str): Ruta al archivo Parquet combinado de entrada.
+#        i (int): El número de semana a asignar a todos los registros en este archivo.
+#
+#    Returns:
+#        str: La ruta donde se guardó el archivo Parquet etiquetado.
+#    """
+#    _, processed_dir = get_dirs()
+#    df = pd.read_parquet(merge_path)
+#
+#    # Asignar directamente el nombre de la semana basado en 'i'
+#    # Todos los registros en este DataFrame serán de la misma semana 'i'
+#    df['year_week'] = f'week_{i}'
+#
+#    # Sumar ítems por cliente, producto y la semana asignada
+#    df_semanal = df.groupby(
+#        ['customer_id', 'product_id', 'year_week'], as_index=False
+#    ).agg(items_sum=('items', 'sum'))
+#
+#    # Combinaciones completas de customer_id y product_id existentes en este DataFrame
+#    pares = df[['customer_id', 'product_id']].drop_duplicates()
+#    
+#    # Crear un MultiIndex con todas las combinaciones de pares y la única semana 'i'
+#    idx = pd.MultiIndex.from_product(
+#        [pares['customer_id'].unique(), pares['product_id'].unique(), [f'week_{i}']],
+#        names=['customer_id', 'product_id', 'year_week']
+#    )
+#
+#    # Reindexar para asegurar todas las combinaciones posibles para esta semana 'i'
+#    df_full = df_semanal.set_index(['customer_id', 'product_id', 'year_week'])\
+#                        .reindex(idx, fill_value=0).reset_index()
+#
+#    # Generar la etiqueta (1 si items_sum > 0, 0 en caso contrario)
+#    df_full['label'] = (df_full['items_sum'] > 0).astype(int)
+#
+#    # Crear el directorio de salida si no existe
+#    os.makedirs(processed_dir, exist_ok=True)
+#    
+#    # Guardar el DataFrame etiquetado con un nombre de archivo que incluya el número de semana
+#    out_filename = f'labeled_week_{i}.parquet'
+#    out_path = os.path.join(processed_dir, out_filename)
+#    df_full.to_parquet(out_path, index=False)
+#    
+#    return out_path
+#
+#
+#def prepare_model_dataset(merge_path: str, labeled_path: str) -> str:
+#    """
+#    Construye dataset con atributos constantes y filtra tras primera compra.
+#    Guarda dataset_filtrado.parquet.
+#    """
+#    _, processed_dir = get_dirs()
+#    df_merged = pd.read_parquet(merge_path)
+#    df_label  = pd.read_parquet(labeled_path)
+#    # atributos constantes
+#    df_client = df_merged[['customer_id','region_id','zone_id','customer_type',
+#                           'Y','X','num_deliver_per_week','num_visit_per_week']]
+#    df_client = df_client.drop_duplicates('customer_id')
+#    df_prod = df_merged[['product_id','brand','category','sub_category','segment','package','size']]
+#    df_prod = df_prod.drop_duplicates('product_id')
+#    # unir
+#    df_model = df_label.merge(df_client, on='customer_id', how='left')
+#    df_model = df_model.merge(df_prod, on='product_id', how='left')
+#    # eliminar cols fecha
+#    df_model = df_model.drop(columns=[c for c in df_model.columns if 'purchase_date' in c], errors='ignore')
+#    # filtrar tras primera compra
+#    df_model['year_week'] = df_model['year_week'].astype(str).str.replace('week_','').astype(int)
+#    def filter_fun(group):
+#        compra = group[group['label']==1]
+#        if compra.empty:
+#            return pd.DataFrame()
+#        first = compra['year_week'].min()
+#        return group[(group['label']==1)|(group['year_week']>=first)]
+#    df_filtrado = df_model.groupby(['customer_id','product_id'], group_keys=False).apply(filter_fun)
+#    os.makedirs(processed_dir, exist_ok=True)
+#    out_path = os.path.join(processed_dir, 'dataset_filtrado.parquet')
+#    df_filtrado.to_parquet(out_path, index=False)
+#    return out_path
+#
+#
+#def save_weekly_datasets(df_filtered: pd.DataFrame) -> list[str]:
+#    """
+#    Saves the filtered dataset as separate Parquet files for each week
+#    in the './data/week_data/' directory.
+#
+#    Args:
+#        df_filtered (pd.DataFrame): The DataFrame prepared by prepare_model_dataset,
+#                                    containing 'year_week' column.
+#
+#    Returns:
+#        list[str]: A list of paths to the saved weekly Parquet files.
+#    """
+#    _, processed_dir = get_dirs()
+#    week_data_dir = os.path.join(processed_dir, 'week_data')
+#    os.makedirs(week_data_dir, exist_ok=True)
+#
+#    saved_paths = []
+#
+#    # Ensure 'year_week' is in a format suitable for file naming
+#    # It should already be integer from prepare_model_dataset, convert back to string for filename
+#    df_filtered['year_week_str'] = 'week_' + df_filtered['year_week'].astype(str)
+#
+#    # Group by year_week and save each group as a separate parquet file
+#    for week_name, week_df in df_filtered.groupby('year_week_str'):
+#        # Drop the temporary 'year_week_str' column before saving
+#        week_df_to_save = week_df.drop(columns=['year_week_str'])
+#        
+#        out_path = os.path.join(week_data_dir, f'{week_name}.parquet')
+#        week_df_to_save.to_parquet(out_path, index=False)
+#        saved_paths.append(out_path)
+#        print(f"Saved: {out_path}") # Optional: for progress tracking
+#        
+#    return saved_paths
+#
 
-def get_dirs():
+import pandas as pd
+import os
+import typer
+
+def get_dirs() -> tuple[str, str, str]:
     """
     Determina rutas raw y processed según AIRFLOW_HOME.
+    Retorna las rutas de data/raw, data/processed, data/week_data 
     """
-    airflow_home = os.environ.get('AIRFLOW_HOME', '/opt/airflow')
+    # Preferencia: usar AIRFLOW_HOME si está disponible, sino './'
+    airflow_home = os.environ.get('AIRFLOW_HOME', './')
     raw_dir = os.path.join(airflow_home, 'data', 'raw')
     processed_dir = os.path.join(airflow_home, 'data', 'processed')
-    return raw_dir, processed_dir
+    week_data = os.path.join(airflow_home, 'data', 'week_data')
+    return raw_dir, processed_dir, week_data
 
 
 def extract_and_merge() -> str:
     """
-    Lee Parquet de transacciones, clientes y productos, los fusiona
-    y guarda merged.parquet en processed.
+    Lee Parquet de transacciones, clientes y productos, los limpia,
+    fusiona y guarda merged.parquet en processed.
     """
-    raw_dir, processed_dir = get_dirs()
+    raw_dir, processed_dir, _ = get_dirs()
+
+    # 1) Leer DataFrames
     df_trans = pd.read_parquet(os.path.join(raw_dir, 'transacciones.parquet'))
-    df_cli   = pd.read_parquet(os.path.join(raw_dir, 'clientes.parquet'))
-    df_prod  = pd.read_parquet(os.path.join(raw_dir, 'productos.parquet'))
+    df_cli = pd.read_parquet(os.path.join(raw_dir, 'clientes.parquet'))
+    df_prod = pd.read_parquet(os.path.join(raw_dir, 'productos.parquet'))
+
+    # 2) Eliminar duplicados exactos y trabajar con copias seguras
+    df_trans_clean = df_trans.copy().drop_duplicates()
+    df_clientes_clean = df_cli.copy().drop_duplicates()
+    df_prod_clean = df_prod.copy().drop_duplicates()
+
+    # 3) Normalizar tipos de ID a string para evitar conflictos en el merge
+    df_trans_clean["customer_id"] = df_trans_clean["customer_id"].astype(str)
+    df_trans_clean["product_id"] = df_trans_clean["product_id"].astype(str)
+    df_clientes_clean["customer_id"] = df_clientes_clean["customer_id"].astype(str)
+    df_prod_clean["product_id"] = df_prod_clean["product_id"].astype(str)
+
+    # 4) Convertir la fecha de compra a datetime
+    df_trans_clean["purchase_date"] = pd.to_datetime(df_trans_clean["purchase_date"])
+
+    # 5) Merge: primero transacciones + clientes, luego resultado + productos
     df_merged = (
-        df_trans
-        .merge(df_cli, on='customer_id', how='left')
-        .merge(df_prod, on='product_id', how='left')
+        df_trans_clean
+        .merge(df_clientes_clean, on="customer_id", how="left")
+        .merge(df_prod_clean, on="product_id", how="left")
     )
+
     os.makedirs(processed_dir, exist_ok=True)
     out_path = os.path.join(processed_dir, 'merged.parquet')
     df_merged.to_parquet(out_path, index=False)
+    
     return out_path
 
 
 def create_label(merge_path: str) -> str:
     """
-    Genera etiquetas semanales (0/1) y guarda labeled.parquet.
+    Genera etiquetas semanales (0/1) a partir de datos fusionados y limpios.
+    Guarda labeled.parquet.
+
+    Args:
+        merge_path (str): Ruta al archivo Parquet combinado de entrada (merged.parquet).
+
+    Returns:
+        str: La ruta donde se guardó el archivo Parquet etiquetado.
     """
-    _, processed_dir = get_dirs()
-    df = pd.read_parquet(merge_path)
-    # año-semana
-    df['year_week'] = df['purchase_date'].dt.to_period('W').astype(str)
-    # suma items por semana
-    df_semanal = df.groupby(
-        ['customer_id','product_id','year_week'], as_index=False
-    ).agg(items_sum=('items','sum'))
-    # combinaciones completas
-    pares = df[['customer_id','product_id']].drop_duplicates()
-    semanas = pd.Series(
-        pd.date_range(df['purchase_date'].min(), df['purchase_date'].max(), freq='D')
-        .to_period('W').unique().astype(str), name='year_week'
+    _, processed_dir, _ = get_dirs()
+    df_merged = pd.read_parquet(merge_path)
+
+    # Asegurarse de que purchase_date sea datetime, aunque extract_and_merge ya lo hace
+    df_merged['purchase_date'] = pd.to_datetime(df_merged['purchase_date'])
+
+    # Calcular 'year_week'
+    df_merged['year_week'] = df_merged['purchase_date'].dt.to_period('W').astype(str)
+
+    # Sumar ítems por semana
+    df_semanal = (
+        df_merged
+        .groupby(['customer_id', 'product_id', 'year_week'], as_index=False)
+        .agg(items_sum=('items', 'sum'))
     )
-    idx = pd.MultiIndex.from_product(
-        [pares['customer_id'].unique(), pares['product_id'].unique(), semanas],
-        names=['customer_id','product_id','year_week']
+
+    # Obtener pares únicos (customer_id, product_id)
+    pares_unicos = df_merged[['customer_id', 'product_id']].drop_duplicates()
+
+    # Obtener todas las semanas completas en el rango de fechas
+    fechas_completas = pd.date_range(df_merged['purchase_date'].min(), df_merged['purchase_date'].max(), freq='D')
+    semanas_completas = pd.Series(fechas_completas.to_period('W').unique().astype(str), name='year_week')
+    
+    # Mapeo de 'YYYYWXX' a 'week_N'
+    semanas_completas_map = {week : f'week_{i+1}' for i, week in enumerate(semanas_completas)}
+
+    # Crear todas las combinaciones válidas de pares y semanas
+    # Este enfoque es más robusto que MultiIndex.from_product directo si hay IDs con diferente rango de fechas
+    combinaciones_validas = pd.MultiIndex.from_frame(
+        pares_unicos.assign(key=1).merge(semanas_completas.to_frame().assign(key=1), on='key').drop('key', axis=1)
     )
-    df_full = df_semanal.set_index(['customer_id','product_id','year_week']).reindex(idx, fill_value=0).reset_index()
-    df_full['label'] = (df_full['items_sum']>0).astype(int)
-    # renombrar semana
-    week_map = {w: f'week_{i+1}' for i,w in enumerate(semanas)}
-    df_full['year_week'] = df_full['year_week'].map(week_map)
+
+    # Reindexar para asegurar todas las combinaciones posibles y rellenar con 0
+    df_semanal_idx = df_semanal.set_index(['customer_id', 'product_id', 'year_week'])
+    df_full = df_semanal_idx.reindex(combinaciones_validas, fill_value=0).reset_index()
+    
+    # Generar la etiqueta (1 si items_sum > 0, 0 en caso contrario)
+    df_full['label'] = (df_full['items_sum'] > 0).astype(int)
+    
+    # Renombrar 'year_week' a 'week_N'
+    df_full['year_week'] = df_full['year_week'].map(semanas_completas_map)
+    
     os.makedirs(processed_dir, exist_ok=True)
     out_path = os.path.join(processed_dir, 'labeled.parquet')
     df_full.to_parquet(out_path, index=False)
+    
     return out_path
 
 
-def prepare_model_dataset(merge_path: str, labeled_path: str) -> str:
+def create_label_new_data(merge_path: str, i: int) -> str:
+    """
+    Genera etiquetas (0/1) para un nuevo conjunto de datos (una sola semana),
+    asignando un número de semana basado en el índice 'i' y guarda labeled_week_{i}.parquet.
+
+    Args:
+        merge_path (str): Ruta al archivo Parquet combinado de entrada para la nueva semana.
+        i (int): El número de semana a asignar a todos los registros en este archivo.
+
+    Returns:
+        str: La ruta donde se guardó el archivo Parquet etiquetado.
+    """
+    _, processed_dir,_ = get_dirs()
+    df = pd.read_parquet(merge_path)
+
+    # Normalizar tipos de ID a string, aunque ya deberían venir limpios de extract_and_merge
+    df["customer_id"] = df["customer_id"].astype(str)
+    df["product_id"] = df["product_id"].astype(str)
+    
+    # Asignar directamente el nombre de la semana basado en 'i'
+    df['year_week'] = f'week_{i}'
+
+    # Sumar ítems por cliente, producto y la semana asignada
+    df_semanal = df.groupby(
+        ['customer_id', 'product_id', 'year_week'], as_index=False
+    ).agg(items_sum=('items', 'sum'))
+
+    # Combinaciones completas de customer_id y product_id existentes en este DataFrame
+    pares = df[['customer_id', 'product_id']].drop_duplicates()
+    
+    # Crear un MultiIndex con todas las combinaciones de pares y la única semana 'i'
+    idx = pd.MultiIndex.from_product(
+        [pares['customer_id'].unique(), pares['product_id'].unique(), [f'week_{i}']],
+        names=['customer_id', 'product_id', 'year_week']
+    )
+
+    # Reindexar para asegurar todas las combinaciones posibles para esta semana 'i'
+    df_full = df_semanal.set_index(['customer_id', 'product_id', 'year_week'])\
+                        .reindex(idx, fill_value=0).reset_index()
+
+    # Generar la etiqueta (1 si items_sum > 0, 0 en caso contrario)
+    df_full['label'] = (df_full['items_sum'] > 0).astype(int)
+
+    os.makedirs(processed_dir, exist_ok=True)
+    out_filename = f'labeled_week_{i}.parquet'
+    out_path = os.path.join(processed_dir, out_filename)
+    df_full.to_parquet(out_path, index=False)
+    
+    return out_path
+
+
+def prepare_model_dataset(merge_path: str, labeled_path: str) -> list[str]:
     """
     Construye dataset con atributos constantes y filtra tras primera compra.
-    Guarda dataset_filtrado.parquet.
+    Guarda datasets separados por semana en './data/processed/week_data/'.
+
+    Args:
+        merge_path (str): Ruta al archivo Parquet combinado de entrada (raw data).
+        labeled_path (str): Ruta al archivo Parquet etiquetado (puede ser 'labeled.parquet'
+                            o 'labeled_week_X.parquet' para datos nuevos).
+
+    Returns:
+        list[str]: Una lista de rutas a los archivos Parquet semanales guardados.
     """
-    _, processed_dir = get_dirs()
+    _, processed_dir,_ = get_dirs()
     df_merged = pd.read_parquet(merge_path)
     df_label  = pd.read_parquet(labeled_path)
-    # atributos constantes
-    df_client = df_merged[['customer_id','region_id','zone_id','customer_type',
-                           'Y','X','num_deliver_per_week','num_visit_per_week']]
-    df_client = df_client.drop_duplicates('customer_id')
-    df_prod = df_merged[['product_id','brand','category','sub_category','segment','package','size']]
-    df_prod = df_prod.drop_duplicates('product_id')
-    # unir
-    df_model = df_label.merge(df_client, on='customer_id', how='left')
-    df_model = df_model.merge(df_prod, on='product_id', how='left')
-    # eliminar cols fecha
+
+    # 1) Extraer atributos constantes de cliente y producto
+    df_client = (
+        df_merged[['customer_id','region_id','zone_id','customer_type',
+                   'Y','X','num_deliver_per_week','num_visit_per_week']]
+        .drop_duplicates(subset='customer_id') # Usar subset para mayor claridad
+    )
+    df_prod = (
+        df_merged[['product_id','brand','category','sub_category','segment','package','size']]
+        .drop_duplicates(subset='product_id') # Usar subset para mayor claridad
+    )
+
+    # 2) Unir df_label con atributos de cliente y producto
+    df_model = (
+        df_label
+        .merge(df_client, on='customer_id', how='left')
+        .merge(df_prod, on='product_id', how='left')
+    )
+
+    # 3) Eliminar cualquier columna de fecha que pueda quedar del merge
     df_model = df_model.drop(columns=[c for c in df_model.columns if 'purchase_date' in c], errors='ignore')
-    # filtrar tras primera compra
+
+    # 4) Filtrar tras primera compra
+    # Asegurarse de que 'year_week' sea un entero para la comparación
     df_model['year_week'] = df_model['year_week'].astype(str).str.replace('week_','').astype(int)
+    
     def filter_fun(group):
-        compra = group[group['label']==1]
-        if compra.empty:
-            return pd.DataFrame()
-        first = compra['year_week'].min()
-        return group[(group['label']==1)|(group['year_week']>=first)]
-    df_filtrado = df_model.groupby(['customer_id','product_id'], group_keys=False).apply(filter_fun)
-    os.makedirs(processed_dir, exist_ok=True)
-    out_path = os.path.join(processed_dir, 'dataset_filtrado.parquet')
-    df_filtrado.to_parquet(out_path, index=False)
-    return out_path
+        purchase = group[group['label'] == 1]
+        if purchase.empty:
+            return pd.DataFrame() # Si no hay compras, no hay registros para mantener
+
+        # Obtener la semana de la primera compra para este par (customer_id, product_id)
+        primera_semana = purchase['year_week'].min()
+        
+        # Mantener solo los registros a partir de la primera compra (o si hay una compra)
+        return group[(group['label'] == 1) | (group['year_week'] >= primera_semana)]
+
+    df_modelo_filtrado = df_model.groupby(['customer_id', 'product_id'], group_keys=False).apply(filter_fun)
+
+    # Añadir 'week_num' para compatibilidad con la lógica de batches (aunque no se use directamente aquí)
+    # y para la función de guardar.
+    df_modelo_filtrado['week_num'] = df_modelo_filtrado['year_week'].astype(int)
+
+    df_modelo_filtrado.to_parquet(processed_dir+'/filtado.parquet')
+    # 5) Llamar a save_weekly_datasets para guardar por semana
+    saved_paths = save_weekly_datasets(df_modelo_filtrado)
+    
+    return saved_paths
+
+
+def save_weekly_datasets(df_filtered: pd.DataFrame) -> list[str]:
+    """
+    Guarda el dataset filtrado como archivos Parquet separados por semana
+    en el directorio './data/processed/week_data/'.
+
+    Args:
+        df_filtered (pd.DataFrame): El DataFrame preparado por prepare_model_dataset,
+                                    que debe contener la columna 'year_week' (como entero).
+
+    Returns:
+        list[str]: Una lista de rutas a los archivos Parquet semanales guardados.
+    """
+    _, processed_dir, week_data_dir = get_dirs()
+    #week_data_dir = os.path.join(processed_dir, 'week_data')
+    os.makedirs(week_data_dir, exist_ok=True)
+    saved_paths = []
+
+    # Asegurarse de que 'year_week' sea un string 'week_X' para el nombre del archivo
+    # Usamos la columna 'week_num' que ya es int, para generar el nombre.
+    df_filtered['year_week_str'] = 'week_' + df_filtered['week_num'].astype(str)
+
+    # Agrupar por semana y guardar cada grupo como un archivo parquet separado
+    for week_name, week_df in df_filtered.groupby('year_week_str'):
+        # Eliminar columnas temporales o no necesarias antes de guardar
+        week_df_to_save = week_df.drop(columns=['year_week_str', 'week_num'], errors='ignore')
+        
+        out_path = os.path.join(week_data_dir, f'{week_name}.parquet')
+        week_df_to_save.to_parquet(out_path, index=False)
+        saved_paths.append(out_path)
+        # No hay prints aquí, según la solicitud.
+
+    return saved_paths
 
 
 # ---------- Transformaciones y estandarización ----------
 drop_zero_var = ['region_id','zone_id','num_visit_per_week','items_sum']
-
 def filter_xy(df: pd.DataFrame) -> pd.DataFrame:
     """Filtra rango geográfico X/Y"""
     return df[(df['X']>-108)&(df['X']<-107)&(df['Y']>-48)&(df['Y']<-46)]
