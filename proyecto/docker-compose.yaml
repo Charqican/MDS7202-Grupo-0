@@ -30,6 +30,7 @@ services:
       - ./dags:/opt/airflow/dags
       - ./logs:/opt/airflow/logs
       - ./plugins:/opt/airflow/plugins
+      - ./scripts:/opt/airflow/scripts
 
   airflow-scheduler:
     image: apache/airflow:2.8.1-python3.10
@@ -45,6 +46,7 @@ services:
       - ./dags:/opt/airflow/dags
       - ./logs:/opt/airflow/logs
       - ./plugins:/opt/airflow/plugins
+      - ./scripts:/opt/airflow/scripts
   
 volumes:
   postgres_db:
