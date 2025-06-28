@@ -1,2 +1,5 @@
 data/
 logs/
+dags/__pycache__
+logs/
+scripts/__pycache__

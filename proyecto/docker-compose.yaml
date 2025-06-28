@@ -17,6 +17,6 @@ services:
       - ./dags:/opt/airflow/dags:ro
       - ./data:/opt/airflow/data
       - ./logs:/opt/airflow/logs
-      - ./scripts:/opt/airflow/scripts:ro   # <--- monta aquí tu código
+      - ./scripts:/opt/airflow/scripts:ro   
 
     command: []
