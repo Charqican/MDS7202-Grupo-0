@@ -4,3 +4,4 @@ matplotlib
 sns
 scikit-learn
 flask
+coloredlogs
