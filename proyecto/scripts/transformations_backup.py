@@ -1,6 +1,6 @@
 import pandas as pd
 import os
-
+import typer
 
 def get_dirs() -> tuple[str, str, str]:
     """
@@ -299,88 +299,67 @@ def transform_features(df: pd.DataFrame) -> pd.DataFrame:
     cat_ohe = pd.get_dummies(df_cat, prefix=cat_cols)
     # Combina features
     result = pd.concat([week_ohe, df_num_scaled, deliver_ohe, cat_ohe], axis=1)
-    result['week_num'] = df2['week_num']
     return result
 
 
-def split_train_val_windows(dataset_path: str) -> list[str]:
+def split_train_val_windows(dataset_path: str,
+                            time_window: int = 4,
+                            stride: int = 3,
+                            week_col: str = 'year_week') -> list[tuple[pd.DataFrame, pd.DataFrame]]:
     """
-    Divide el dataset de features en archivos semanales por week_num.
-    Guarda cada subset en data/week_data/week_{i}.parquet.
-
+    Genera ventanas de train/val con tamaño time_window y desplazamiento stride.
     Args:
-        dataset_path (str): Ruta al Parquet con el dataset de features.
-    Returns:
-        list[str]: Lista de rutas a los archivos Parquet generados.
-    """
-    _, _, week_data_dir = get_dirs()
-    os.makedirs(week_data_dir, exist_ok=True)
+        dataset_path: ruta al Parquet con dataset_filtrado.
+        time_window: número de semanas por ventana.
+        stride: paso entre ventanas.
+        week_col: columna que contiene año_semana (string "week_i" o entero i).
 
+    Returns:
+        splits: lista de tuplas (train_df, val_df) por cada ventana.
+    """
+    _, _ = get_dirs()
     df = pd.read_parquet(dataset_path)
-    if 'week_num' not in df.columns:
-        raise KeyError("La columna 'week_num' no existe en el dataset de features")
 
-    paths = []
-    for week in sorted(df['week_num'].unique()):
-        df_week = df[df['week_num'] == week]
-        out_file = os.path.join(week_data_dir, f'week_{week}.parquet')
-        df_week.to_parquet(out_file, index=False)
-        paths.append(out_file)
+    # 1) Detectar si year_week es string o entero y extraer week_num:
+    col = df[week_col]
+    if pd.api.types.is_string_dtype(col):
+        # cadena “week_1”, “week_2”, …
+        week_nums = col.str.extract(r'week_(\d+)')[0].astype(int)
+    else:
+        # ya es entero (p.ej. 1, 2, 3, …)
+        week_nums = col.astype(int)
+    df['week_num'] = week_nums
 
-    return paths
+    # 2) Crear ventanas deslizantes
+    weeks = sorted(df['week_num'].unique())
+    batches = [weeks[i : i + time_window]
+               for i in range(0, len(weeks) - time_window + 1, stride)]
 
-
-def save_weekly_features_labels(filtered_path: str) -> dict[str, list[str]]:
-    """
-    Crea, bajo data/processed, dos carpetas: 'features' y 'labels'.
-    - En 'features/' guarda por semana week_{i}.parquet con todas las columnas
-      del df_filtrado excepto 'label'.
-    - En 'labels/' guarda label_week_{i}.parquet con solo la columna 'label'
-      del mismo subset y en el mismo orden.
-
-    Args:
-        filtered_path: ruta al Parquet generado por prepare_model_dataset.
-    Returns:
-        dict: {
-          'features': [ruta_a_week_1.parquet, …, ruta_a_week_N.parquet],
-          'labels':   [ruta_a_label_week_1.parquet, …, ruta_a_label_week_N.parquet]
-        }
-    """
-    import os
-    import pandas as pd
-
-    _, processed_dir, _ = get_dirs()
-    features_dir = os.path.join(processed_dir, 'features')
-    labels_dir   = os.path.join(processed_dir, 'labels')
-    os.makedirs(features_dir, exist_ok=True)
-    os.makedirs(labels_dir,   exist_ok=True)
-
-    df = pd.read_parquet(filtered_path)
-    # Asegúrate de tener week_num
-    if 'week_num' not in df.columns:
-        if pd.api.types.is_string_dtype(df['year_week']):
-            df['week_num'] = df['year_week'].str.extract(r'week_(\d+)')[0].astype(int)
+    # 3) Manejo de remanente final
+    rem = weeks[len(weeks) - time_window + stride :]
+    if rem:
+        if len(rem) <= time_window // 2:
+            batches[-1].extend(rem)
         else:
-            df['week_num'] = df['year_week'].astype(int)
+            batches.append(rem)
 
-    feat_paths = []
-    label_paths = []
+    # 4) Generar lista de splits (train, val)
+    splits = []
+    split_pt = time_window - stride
+    for batch in batches:
+        train_weeks = batch[:split_pt]
+        val_weeks   = batch[split_pt:]
+        train_df = df[df['week_num'].isin(train_weeks)]
+        val_df   = df[df['week_num'].isin(val_weeks)]
+        splits.append((train_df, val_df))
 
-    for week in sorted(df['week_num'].unique()):
-        df_week = df[df['week_num'] == week]
-        # Features (todo excepto label)
-        feat_df = df_week.drop(columns=['label'], errors='ignore')
-        feat_file = os.path.join(features_dir, f'week_{week}.parquet')
-        feat_df.to_parquet(feat_file, index=False)
-        feat_paths.append(feat_file)
+    return splits
 
-        # Labels (solo la columna label)
-        lbl_df = df_week[['label']]
-        lbl_file = os.path.join(labels_dir, f'label_week_{week}.parquet')
-        lbl_df.to_parquet(lbl_file, index=False)
-        label_paths.append(lbl_file)
 
-    return {'features': feat_paths, 'labels': label_paths}
+
+
+
+
 
 
 if __name__ == '__main__':
