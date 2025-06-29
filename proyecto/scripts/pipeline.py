@@ -95,7 +95,7 @@ preprocessor = ColumnTransformer([
     ('num',          numeric_transformer,     ['size','X','Y']),
     ('deliver_bins', deliver_binner,          ['num_deliver_per_week']),
     ('cat',          categorical_transformer, categorical_cols),
-    ('week_passthrough', 'passthrough', ['week_num', 'label'])
+    #('week_passthrough', 'passthrough', ['week_num'])
 ], remainder='drop', verbose_feature_names_out=False)
 
 pipeline_fe = Pipeline([

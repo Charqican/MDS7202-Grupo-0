@@ -29,12 +29,13 @@ def dynamic_import_from_path(module_name: str, base_path: str):
 scripts_path = get_scripts_base_path()
 transformations = dynamic_import_from_path('transformations', scripts_path)
 
-extract_and_merge = transformations.extract_and_merge
-create_label = transformations.create_label
-prepare_model_dataset = transformations.prepare_model_dataset
-transform_features = transformations.transform_features
+# Funciones importadas
+get_unique_customer_product_pairs = transformations.get_unique_customer_product_pairs
+merge_with_features = transformations.merge_with_features
+create_labels_from_transactions = transformations.create_labels_from_transactions
+transform_enriched_dataset = transformations.transform_enriched_dataset
 split_train_val_windows = transformations.split_train_val_windows
-save_weekly_features_labels = transformations.save_weekly_features_labels
+save_weekly_features_labels_from_transformed = transformations.save_weekly_features_labels_from_transformed
 
 # -------- DAG DEFINITION --------
 default_args = {
@@ -43,77 +44,64 @@ default_args = {
 }
 
 with DAG(
-    dag_id='etl_pipeline_features_labels',
+    dag_id='etl_features_labels_pipeline_v2',
     default_args=default_args,
     start_date=datetime(2025, 6, 29),
     schedule_interval=None,
     catchup=False,
-    tags=['etl', 'features_labels']
+    tags=['etl', 'features', 'labels']
 ) as dag:
 
-    def task_extract(**kwargs):
-        path = extract_and_merge()
-        kwargs['ti'].xcom_push(key='merge_path', value=path)
+    def task_unique_pairs(**kwargs):
+        path = get_unique_customer_product_pairs()
+        kwargs['ti'].xcom_push(key='pairs_path', value=path)
 
-    def task_label(**kwargs):
+    def task_enrich(**kwargs):
         ti = kwargs['ti']
-        merge_path = ti.xcom_pull(task_ids='extract', key='merge_path')
-        label_path = create_label(merge_path)
-        ti.xcom_push(key='label_path', value=label_path)
+        pairs_path = ti.xcom_pull(task_ids='unique_pairs', key='pairs_path')
+        enriched_path = merge_with_features(pairs_path)
+        ti.xcom_push(key='enriched_path', value=enriched_path)
 
-    def task_prepare(**kwargs):
-        ti = kwargs['ti']
-        merge_path = ti.xcom_pull(task_ids='extract', key='merge_path')
-        label_path = ti.xcom_pull(task_ids='label', key='label_path')
-        prepared_path = prepare_model_dataset(merge_path, label_path)
-        ti.xcom_push(key='prepared_path', value=prepared_path)
+    def task_labels(**kwargs):
+        label_path = create_labels_from_transactions()
+        kwargs['ti'].xcom_push(key='labels_path', value=label_path)
 
     def task_transform(**kwargs):
-        ti = kwargs['ti']
-        prepared_path = ti.xcom_pull(task_ids='prepare', key='prepared_path')
-        transformed_path = transform_features(pd.read_parquet(prepared_path))
-        ti.xcom_push(key='transformed_path', value=transformed_path)
+        transformed_path = transform_enriched_dataset()
+        kwargs['ti'].xcom_push(key='transformed_path', value=transformed_path)
 
-    def task_split(**kwargs):
-        ti = kwargs['ti']
-        transformed_path = ti.xcom_pull(task_ids='transform', key='transformed_path')  # mismo input que transform_features
-        weekly_paths = split_train_val_windows(transformed_path)
-        ti.xcom_push(key='weekly_files', value=weekly_paths)
 
-    def task_separate(**kwargs):
+    def task_save_weekly(**kwargs):
         ti = kwargs['ti']
-        weekly_paths = ti.xcom_pull(task_ids='split', key='weekly_files')
-        result = save_weekly_features_labels(weekly_paths)
-        ti.xcom_push(key='separated', value=result)
+        transformed_enriched_path = ti.xcom_pull(task_ids='transform_features', key='transformed_path')
+        result = save_weekly_features_labels_from_transformed(transformed_enriched_path)
+        kwargs['ti'].xcom_push(key='saved_weekly', value=result)
 
-    extract = PythonOperator(
-        task_id='extract',
-        python_callable=task_extract
+    unique_pairs = PythonOperator(
+        task_id='unique_pairs',
+        python_callable=task_unique_pairs
     )
 
-    label = PythonOperator(
-        task_id='label',
-        python_callable=task_label
+    enrich = PythonOperator(
+        task_id='enrich_dataset',
+        python_callable=task_enrich
     )
 
-    prepare = PythonOperator(
-        task_id='prepare',
-        python_callable=task_prepare
+    labels = PythonOperator(
+        task_id='generate_labels',
+        python_callable=task_labels
     )
 
     transform = PythonOperator(
-        task_id='transform',
+        task_id='transform_features',
         python_callable=task_transform
     )
 
-    split = PythonOperator(
-        task_id='split',
-        python_callable=task_split
+    save = PythonOperator(
+        task_id='save_weekly_labels',
+        python_callable=task_save_weekly
     )
 
-    separate = PythonOperator(
-        task_id='separate',
-        python_callable=task_separate
-    )
-
-    extract >> label >> prepare >> transform >> split >> separate
+    # Flujo final
+    unique_pairs >> enrich
+    enrich >> [transform, labels] >> save

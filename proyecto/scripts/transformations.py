@@ -3,11 +3,11 @@ import os
 import sys
 import importlib
 import logging
-
+import coloredlogs
 #### IMPORTS 
 
 logger = logging.getLogger(__name__)
-logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
+coloredlogs.install(level='INFO', logger=logger)
 
 # ------ FUNCION PARA IMPORTACION ------
 def dynamic_import_from_path(module_name: str, base_path: str):
@@ -110,63 +110,114 @@ def extract_and_merge() -> str:
     return out_path
 
 
-def create_label(merge_path: str) -> str:
-    """
-    Genera etiquetas semanales (0/1) a partir de datos fusionados y limpios.
-    Guarda labeled.parquet.
 
-    Args:
-        merge_path (str): Ruta al archivo Parquet combinado de entrada (merged.parquet).
+def get_unique_customer_product_pairs() -> str:
+    """
+    Genera el producto cartesiano entre todos los customer_id y product_id únicos.
+    Guarda como unique_pairs.parquet.
 
     Returns:
-        str: La ruta donde se guardó el archivo Parquet etiquetado.
+        str: Ruta al archivo guardado.
     """
-    _, processed_dir, _ = get_dirs()
-    df_merged = pd.read_parquet(merge_path)
+    raw_dir, processed_dir, _ = get_dirs()
+    trans_path = os.path.join(raw_dir, 'transacciones.parquet')
+    
+    logger.info(f"Loading transactions from {trans_path}")
+    df_trans = pd.read_parquet(trans_path)
+    df_trans["customer_id"] = df_trans["customer_id"].astype(str)
+    df_trans["product_id"] = df_trans["product_id"].astype(str)
 
-    # Asegurarse de que purchase_date sea datetime, aunque extract_and_merge ya lo hace
-    df_merged['purchase_date'] = pd.to_datetime(df_merged['purchase_date'])
+    unique_customers = df_trans[['customer_id']].drop_duplicates()
+    unique_products = df_trans[['product_id']].drop_duplicates()
 
-    # Calcular 'year_week'
-    df_merged['week_num'] = df_merged['purchase_date'].dt.to_period('W').astype(str)
+    logger.info(f"Found {len(unique_customers)} unique customers and {len(unique_products)} unique products.")
 
-    # Sumar ítems por semana
-    df_semanal = (
-        df_merged
+    # Crear producto cartesiano usando merge con clave auxiliar
+    unique_customers['key'] = 1
+    unique_products['key'] = 1
+    unique_pairs = unique_customers.merge(unique_products, on='key').drop('key', axis=1)
+
+    os.makedirs(processed_dir, exist_ok=True)
+    out_path = os.path.join(processed_dir, 'unique_pairs.parquet')
+    unique_pairs.to_parquet(out_path, index=False)
+
+    logger.info(f"Saved {len(unique_pairs)} customer-product pairs (cartesian product) to {out_path}")
+    return out_path
+
+
+
+def merge_with_features(pairs_path: str) -> str:
+    """
+    Realiza un merge del dataset de pares únicos con información de clientes y productos.
+
+    Args:
+        pairs_path (str): Ruta al archivo con los pares únicos.
+
+    Returns:
+        str: Ruta del archivo enriquecido.
+    """
+    raw_dir, processed_dir, _ = get_dirs()
+
+    logger.info(f"Loading unique pairs from {pairs_path}")
+    df_pairs = pd.read_parquet(pairs_path)
+    df_cli = pd.read_parquet(os.path.join(raw_dir, 'clientes.parquet'))
+    df_prod = pd.read_parquet(os.path.join(raw_dir, 'productos.parquet'))
+
+    df_cli["customer_id"] = df_cli["customer_id"].astype(str)
+    df_prod["product_id"] = df_prod["product_id"].astype(str)
+
+    df_enriched = (
+        df_pairs
+        .merge(df_cli, on='customer_id', how='left')
+        .merge(df_prod, on='product_id', how='left')
+    )
+
+    out_path = os.path.join(processed_dir, 'enriched_pairs.parquet')
+    df_enriched.to_parquet(out_path, index=False)
+
+    logger.info(f"Saved enriched pairs with shape {df_enriched.shape} to {out_path}")
+    return out_path
+
+
+def create_labels_from_transactions() -> str:
+    """
+    Genera etiquetas semanales (0/1) a partir de transacciones históricas.
+    Solo incluye combinaciones (cliente, producto, semana) que hayan ocurrido.
+    
+    Returns:
+        str: Ruta al archivo Parquet con las etiquetas generadas.
+    """
+    raw_dir, processed_dir, _ = get_dirs()
+    trans_path = os.path.join(raw_dir, 'transacciones.parquet')
+    logger.info(f"Loading transactions from {trans_path}")
+    
+    df_trans = pd.read_parquet(trans_path)
+
+    # Formateo de columnas
+    df_trans['customer_id'] = df_trans['customer_id'].astype(str)
+    df_trans['product_id'] = df_trans['product_id'].astype(str)
+    df_trans['purchase_date'] = pd.to_datetime(df_trans['purchase_date'])
+
+    # Calcular semana calendario
+    base_date = pd.Timestamp('2024-01-01')
+    df_trans['week_num'] = ((df_trans['purchase_date'] - base_date).dt.days // 7 + 1).astype(int)
+    logger.info(f"Transactions span {df_trans['week_num'].nunique()} unique weeks.")
+
+    # Agrupar para obtener la etiqueta
+    df_labels = (
+        df_trans
         .groupby(['customer_id', 'product_id', 'week_num'], as_index=False)
         .agg(items_sum=('items', 'sum'))
     )
-
-    # Obtener pares únicos (customer_id, product_id)
-    pares_unicos = df_merged[['customer_id', 'product_id']].drop_duplicates()
-
-    # Obtener todas las semanas completas en el rango de fechas
-    fechas_completas = pd.date_range(df_merged['purchase_date'].min(), df_merged['purchase_date'].max(), freq='D')
-    semanas_completas = pd.Series(fechas_completas.to_period('W').unique().astype(str), name='week_num')
     
-    # Mapeo de 'YYYYWXX' a 'week_N'
-    semanas_completas_map = {week : f'week_{i+1}' for i, week in enumerate(semanas_completas)}
+    df_labels['label'] = (df_labels['items_sum'] > 0).astype(int)
+    df_labels.drop(columns=['items_sum'], inplace=True)
 
-    # Crear todas las combinaciones válidas de pares y semanas
-    # Este enfoque es más robusto que MultiIndex.from_product directo si hay IDs con diferente rango de fechas
-    combinaciones_validas = pd.MultiIndex.from_frame(
-        pares_unicos.assign(key=1).merge(semanas_completas.to_frame().assign(key=1), on='key').drop('key', axis=1)
-    )
-
-    # Reindexar para asegurar todas las combinaciones posibles y rellenar con 0
-    df_semanal_idx = df_semanal.set_index(['customer_id', 'product_id', 'week_num'])
-    df_full = df_semanal_idx.reindex(combinaciones_validas, fill_value=0).reset_index()
-    
-    # Generar la etiqueta (1 si items_sum > 0, 0 en caso contrario)
-    df_full['label'] = (df_full['items_sum'] > 0).astype(int)
-    
-    # Renombrar 'year_week' a 'week_N'
-    df_full['week_num'] = df_full['week_num'].map(semanas_completas_map)
-    
+    out_path = os.path.join(processed_dir, 'weekly_labels.parquet')
     os.makedirs(processed_dir, exist_ok=True)
-    out_path = os.path.join(processed_dir, 'labeled.parquet')
-    df_full.to_parquet(out_path, index=False)
-    
+    df_labels.to_parquet(out_path, index=False)
+
+    logger.info(f"Weekly labels dataset saved to {out_path} with {len(df_labels)} rows.")
     return out_path
 
 
@@ -194,7 +245,6 @@ def prepare_model_dataset(merge_path: str, labeled_path: str) -> str:
         .merge(df_prod, on='product_id', how='left')
     )
 
-
     df_model = df_model.drop(columns=[c for c in df_model.columns if 'purchase_date' in c], errors='ignore')
 
 
@@ -216,18 +266,39 @@ def prepare_model_dataset(merge_path: str, labeled_path: str) -> str:
     return filtrado_path
 
 
-def transform_features(df: pd.DataFrame) -> str:
-    _, processed_dir,_ = get_dirs()
+def transform_enriched_dataset() -> str:
+    """
+    Aplica transformaciones sobre el dataset enriquecido de clientes-productos.
+    Guarda el resultado como archivo Parquet.
+
+    Returns:
+        str: Ruta al archivo transformado.
+    """
+    _, processed_dir, _ = get_dirs()
+    enriched_path = os.path.join(processed_dir, 'enriched_pairs.parquet')
+    
+    logger.info(f"Loading enriched dataset from {enriched_path}")
+    df = pd.read_parquet(enriched_path)
+
     drop_zero_var = ['region_id', 'zone_id', 'num_visit_per_week', 'items_sum']
 
     def filter_xy(df: pd.DataFrame) -> pd.DataFrame:
         return df[(df['X'] > -108) & (df['X'] < -107) & (df['Y'] > -48) & (df['Y'] < -46)]
 
     df_filtered = filter_xy(df.copy()).drop(columns=drop_zero_var, errors='ignore')
+
+    logger.info(f"Applying feature transformation pipeline on {len(df_filtered)} records.")
     transformed = pipeline_fe.fit_transform(df_filtered)
     df_transformed = pd.DataFrame(transformed, columns=pipeline_fe.get_feature_names_out())
-    transformado_path = os.path.join(processed_dir,'transformed.parquet')
-    df_transformed.to_parquet(transformado_path)
+
+    # 👇 Añadir customer_id y product_id desde df_filtered
+    df_transformed.insert(0, 'customer_id', df_filtered['customer_id'].values)
+    df_transformed.insert(1, 'product_id', df_filtered['product_id'].values)
+
+    transformado_path = os.path.join(processed_dir, 'transformed_enriched.parquet')
+    df_transformed.to_parquet(transformado_path, index=False)
+    
+    logger.info(f"Saved transformed enriched dataset to {transformado_path}")
     return transformado_path
 
 
@@ -250,31 +321,42 @@ def split_train_val_windows(dataset_path: str) -> list[str]:
     return paths
 
 
-def save_weekly_features_labels(weekly_files: list[str]) -> dict[str, list[str]]:
+def save_weekly_features_labels_from_transformed(transformed_path: str) -> list[str]:
     _, processed_dir, _ = get_dirs()
-    features_dir = os.path.join(processed_dir, 'features')
+    labels_path = os.path.join(processed_dir, 'weekly_labels.parquet')
     labels_dir = os.path.join(processed_dir, 'labels')
-    os.makedirs(features_dir, exist_ok=True)
     os.makedirs(labels_dir, exist_ok=True)
 
-    feat_paths = []
-    label_paths = []
+    logger.info(f"Loading transformed features from {transformed_path}")
+    df_transformed = pd.read_parquet(transformed_path)
 
-    for week_file in sorted(weekly_files):
-        df_week = pd.read_parquet(week_file)
+    logger.info(f"Loading weekly labels from {labels_path}")
+    df_labels = pd.read_parquet(labels_path)
 
-        base_name = os.path.basename(week_file)
-        week_num = base_name.replace('week_', '').replace('.parquet', '')
+    # Extraer todas las semanas únicas
+    all_weeks = sorted(df_labels['week_num'].unique())
 
-        feat_df = df_week.drop(columns=['label'], errors='ignore')
-        feat_file = os.path.join(features_dir, f'week_{int(week_num)}.parquet')
-        feat_df.to_parquet(feat_file, index=False)
-        feat_paths.append(feat_file)
+    saved_paths = []
 
-        lbl_df = df_week[['label']]
-        lbl_file = os.path.join(labels_dir, f'label_week_{int(week_num)}.parquet')
-        lbl_df.to_parquet(lbl_file, index=False)
-        label_paths.append(lbl_file)
+    for week in all_weeks:
+        # Subset de etiquetas para la semana
+        df_week_labels = df_labels[df_labels['week_num'] == week][['customer_id', 'product_id', 'label']]
 
-    logger.info(f"Saved features and labels separately for {len(weekly_files)} weeks")
-    return {'features': feat_paths, 'labels': label_paths}
+        # Obtener todas las combinaciones para esa semana, replicando df_transformed pero con la columna week_num fija
+        df_week_full = df_transformed.copy()
+        df_week_full['week_num'] = week
+
+        # Merge con etiquetas: si no hay etiqueta, es 0
+        merged = df_week_full.merge(df_week_labels, on=['customer_id', 'product_id'], how='left')
+        merged['label'] = merged['label'].fillna(0).astype(int)
+
+        # Guardar solo columnas clave + label
+        cols_to_save = ['week_num', 'label']
+        merged = merged[cols_to_save]
+
+        out_path = os.path.join(labels_dir, f'week_labels_{week}.parquet')
+        merged.to_parquet(out_path, index=False)
+        saved_paths.append(out_path)
+
+    logger.info(f"Saved weekly features+labels datasets for {len(all_weeks)} weeks to {labels_dir}")
+    return saved_paths
