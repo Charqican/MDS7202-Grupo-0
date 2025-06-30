@@ -32,7 +32,7 @@ CURRENT_PREDICTION_WEEK_FILE = os.path.join(get_data_base_path(), 'model_state/c
 PREDICTIONS_DIR = os.path.join(get_data_base_path(), 'predictions')
 
 class IncrementalXGBoost(BaseEstimator, ClassifierMixin):
-    def __init__(self, f1_threshold_drop: float = 0.05,
+    def __init__(self, f1_threshold_drop: float = 0.1,
                  reset_window_size: int = 8, 
                  initial_training_weeks: int = 8, 
                  max_depth: int = 6, n_estimators: int = 100, learning_rate: float = 0.1,
@@ -80,13 +80,12 @@ class IncrementalXGBoost(BaseEstimator, ClassifierMixin):
                 break
             
             # Este es el caso en donde si tenemos labels.
-            #if self.last_evaluated_f1 is not None and (self.last_evaluated_f1 - f1 > self.f1_threshold_drop):
-            if self.last_evaluated_f1 is not None and (False):
+            if self.last_evaluated_f1 is not None and (self.last_evaluated_f1 - f1 > self.f1_threshold_drop):
                 self._log(logging.INFO, f"Comenzando un retrain. Diferencia anterior: {self.last_evaluated_f1 - f1 > self.f1_threshold_drop}")
                 self.full_retrain()
             else:
                 self._log(logging.INFO, f"Diferencia anterior: {self.last_evaluated_f1} - {f1}")
-                self.train_incremental_and_update_history(str(self.current_week_to_predict))
+                self.train_incremental_and_update_history()
             
             self.last_evaluated_f1 = f1
             self.current_week_to_predict += 1  # Avanza a la próxima semana
@@ -122,57 +121,65 @@ class IncrementalXGBoost(BaseEstimator, ClassifierMixin):
         pass 
 
 
-    def _append_week_to_history(self, df: pd.DataFrame):
+    def _append_week_to_history(self, week : int):
         """
         Añade el DataFrame al historial de entrenamiento.
         Asume que la operación es segura y no requiere verificación.
         """
-        self._log(logging.INFO, f"Appending new week to training history (Week {df.get('week_num', 'unknown')}).")
-        self.history_.append(df)
+        self._log(logging.INFO, f"Appending new week to training history (Week {week}).")
+        self.history_.append(week)
 
 
-    def initial_train(self):
-        self._log(logging.INFO, "Starting cold start training.")
+    def full_retrain(self):
+        """
+        Performs a full retraining of the model using the weeks stored in history_,
+        which now contains only the week numbers.
+        """
+        self._log(logging.INFO, "Starting full model retraining based on historical week numbers.")
+
+        if not self.history_:
+            self._log(logging.ERROR, "Cannot perform full retraining: model history is empty.")
+            raise ValueError("Model history is empty for full retraining.")
 
         features_path = os.path.join(FEATURES_DIR, 'transformed_enriched.parquet')
-        
         features = pd.read_parquet(features_path)
-        self._log(logging.INFO, f"{features.columns}")
-        all_label_files = sorted([f for f in os.listdir(LABELS_DIR) if f.startswith('week_labels_') and f.endswith('.parquet')], key= lambda x : int(x.split('_')[-1].split('.')[0]) )
 
-        if len(all_label_files) < self.initial_training_weeks:
-            self._log(logging.ERROR, f"Insufficient label weeks for cold start. Found {len(all_label_files)}, required {self.initial_training_weeks}.")
-            raise ValueError("Insufficient label data for cold start.")
+        combined_dfs = []
 
-        initial_dfs = []
-        for i in range(self.initial_training_weeks):
-            label_path = os.path.join(LABELS_DIR, all_label_files[i])
+        for week_num in self.history_:
+            week_num = int(week_num)  # Asegura que sea entero
+            label_path = os.path.join(LABELS_DIR, f"week_labels_{week_num}.parquet")
+            if not os.path.exists(label_path):
+                self._log(logging.WARNING, f"Label file not found for week {week_num}. Skipping.")
+                continue
+
             labels = pd.read_parquet(label_path)
+            features_copy = features.copy()
+            #eatures_copy['week_num'] = week_num
 
-            week_str = all_label_files[i].replace('week_labels_', '').replace('.parquet', '')
-            features_with_week = features.copy()
-            features_with_week['week_num'] = int(week_str)
-
-            merged_df = pd.merge(features_with_week, labels['label'], left_index=True,right_index=True, how='left')
+            merged_df = pd.merge(features_copy, labels['label'], left_index=True, right_index=True, how='left')
             merged_df[self.label_col] = merged_df[self.label_col].fillna(0).astype(int)
 
-            initial_dfs.append(merged_df)
-            self.history_.append(merged_df)
+            combined_dfs.append(merged_df)
 
-        combined_df = pd.concat(initial_dfs, ignore_index=True)
-        X_train_initial = combined_df.drop(columns=[self.label_col], errors='ignore')
-        X_train_initial['product_id'] = X_train_initial['product_id'].astype(int)
-        X_train_initial['customer_id'] = X_train_initial['customer_id'].astype(int)
-        y_train_initial = combined_df[self.label_col]
+        if not combined_dfs:
+            self._log(logging.ERROR, "No valid data found from historical weeks for retraining.")
+            raise ValueError("No data available for retraining.")
 
-        self._create_or_update_model(X_train_initial, y_train_initial, X_train_initial.copy(), y_train_initial.copy(), is_full_retrain=True)
-        self._log(logging.INFO, "Cold start training completed.")
+        combined_df = pd.concat(combined_dfs, ignore_index=True)
 
-        
-        last_trained_week_str = all_label_files[self.initial_training_weeks - 1].replace('week_labels_', '').replace('.parquet', '')
-        last_trained_week_num = int(last_trained_week_str)
-        self.current_week_to_predict = last_trained_week_num + 1 # Suma 1 para apuntar a la próxima semana
-        self._log(logging.INFO, f"Next week for prediction initialized to: {self.current_week_to_predict}.")
+        X_train = combined_df.drop(columns=[self.label_col], errors='ignore')
+        y_train = combined_df[self.label_col]
+        X_train['customer_id'] = X_train['customer_id'].astype(int)
+        X_train['product_id'] = X_train['product_id'].astype(int)
+
+        self._create_or_update_model(X_train, y_train, X_train.copy(), y_train.copy(), is_full_retrain=True)
+
+        _, self.last_evaluated_f1 = self._evaluate_performance(self.model, X_train, y_train)
+        self._log(logging.INFO, f"Full retraining completed. New F1-score after retraining: {self.last_evaluated_f1:.4f}")
+        self._log(logging.INFO, f"Current week to predict remains at: {self.current_week_to_predict}")
+
+        return self.last_evaluated_f1
 
 
     def generate_predictions_for_next_week(self) -> pd.DataFrame:
@@ -195,7 +202,7 @@ class IncrementalXGBoost(BaseEstimator, ClassifierMixin):
         features_df = pd.read_parquet(transformed_path).copy()
 
         # Agregar la semana actual para predicción
-        features_df['week_num'] = int(prediction_week)
+        #features_df['week_num'] = int(prediction_week)
 
         # Preparar features para el modelo
         X_predict = features_df
@@ -206,7 +213,8 @@ class IncrementalXGBoost(BaseEstimator, ClassifierMixin):
 
         probabilities = self.model.predict_proba(X_predict)[:, 1]
 
-        predictions_df = features_df[['customer_id', 'product_id', 'week_num']].copy()
+        predictions_df = features_df[['customer_id', 'product_id']].copy()
+        predictions_df['week_num'] = prediction_week
         predictions_df['prediction_proba'] = probabilities
         predictions_df['prediction'] = (probabilities >= self.prediction_boundry).astype(int)
 
@@ -241,29 +249,30 @@ class IncrementalXGBoost(BaseEstimator, ClassifierMixin):
 
 
     # --- MÉTODOS PARA EL FLUJO DE TRABAJO DEL DAG ---
-    def train_incremental_and_update_history(self, week_t_date_str: str):
-        self._log(logging.INFO, f"Starting incremental training for Week {week_t_date_str}.")
+    def train_incremental_and_update_history(self):
+        current_week = self.current_week_to_predict
+        self._log(logging.INFO, f"Starting incremental training for Week {current_week}.")
 
         features_path = os.path.join(FEATURES_DIR, 'transformed_enriched.parquet')  # path fijo al dataset transformado
         labels_path = os.path.join(LABELS_DIR, f"week_labels_{self.current_week_to_predict}.parquet")
 
         if not os.path.exists(features_path) or not os.path.exists(labels_path):
-            self._log(logging.ERROR, f"Missing features or labels for Week {week_t_date_str} at {features_path} or {labels_path}.")
-            raise FileNotFoundError(f"Data for Week {week_t_date_str} not found for training.")
+            self._log(logging.ERROR, f"Missing features or labels for Week {current_week} at {features_path} or {labels_path}.")
+            raise FileNotFoundError(f"Data for Week {current_week} not found for training.")
 
         features_t = pd.read_parquet(features_path)
         labels_t = pd.read_parquet(labels_path)
 
         # Agregamos la columna week_num para esta semana en features antes del merge
         features_t = features_t.copy()
-        features_t['week_num'] = int(week_t_date_str)
+        #features_t['week_num'] = int(current_week)
 
         full_week_t_df = pd.merge(features_t, labels_t['label'], left_index=True, right_index=True, how='left')
 
         if self.xgb_params['objective'] == 'binary:logistic':
             full_week_t_df[self.label_col] = full_week_t_df[self.label_col].fillna(0).astype(int)
 
-        self.history_.append(full_week_t_df)
+        self.history_.append(current_week)
 
         X_train = full_week_t_df.drop(columns=[self.label_col])
         X_train['product_id'] =X_train['product_id'].astype(int)
@@ -274,7 +283,7 @@ class IncrementalXGBoost(BaseEstimator, ClassifierMixin):
         y_eval = y_train.copy()
 
         self._create_or_update_model(X_train, y_train, X_eval, y_eval, is_full_retrain=False)
-        self._log(logging.INFO, f"Incremental training for Week {week_t_date_str} completed. Model updated.")
+        self._log(logging.INFO, f"Incremental training for Week {current_week} completed. Model updated.")
 
 
     def evaluate_and_detect_drift(self):
@@ -325,40 +334,55 @@ class IncrementalXGBoost(BaseEstimator, ClassifierMixin):
             auc_score = roc_auc_score(y_true, y_pred_proba)
             self._log(logging.INFO, f"Evaluation for Week {week_to_evaluate} completed. AUC={auc_score:.4f}, F1-score={f1:.4f}")
             
-            # APADIMOS LA SEMANA AL HISTORIAL, SOLO DESPUES DE EVALUAR.
-            self._append_week_to_history(eval_df.copy())
+            # AÑADIMOS LA SEMANA AL HISTORIAL, SOLO DESPUES DE EVALUAR.
+            self._append_week_to_history(week_to_evaluate)
 
 
         return f1
 
 
-    def full_retrain(self):
-        """
-        Performs a full retraining of the model using the last window of historical data.
-        Triggered when data drift is detected or as a scheduled full refresh.
-        """
-        self._log(logging.INFO, "Starting full model retraining due to detected data drift or scheduled refresh.")
+    def initial_train(self):
+        self._log(logging.INFO, "Starting cold start training.")
 
-        if not self.history_:
-            self._log(logging.ERROR, "Cannot perform full retraining: model history is empty.")
-            raise ValueError("Model history is empty for full retraining.")
+        features_path = os.path.join(FEATURES_DIR, 'transformed_enriched.parquet')
+        
+        features = pd.read_parquet(features_path)
+        self._log(logging.INFO, f"{features.columns}")
+        all_label_files = sorted([f for f in os.listdir(LABELS_DIR) if f.startswith('week_labels_') and f.endswith('.parquet')], key= lambda x : int(x.split('_')[-1].split('.')[0]) )
 
-        combined_history_df = pd.concat(list(self.history_), ignore_index=True)
+        if len(all_label_files) < self.initial_training_weeks:
+            self._log(logging.ERROR, f"Insufficient label weeks for cold start. Found {len(all_label_files)}, required {self.initial_training_weeks}.")
+            raise ValueError("Insufficient label data for cold start.")
 
-        X_train_full = combined_history_df.drop(columns=[self.label_col], errors='ignore')
-        y_train_full = combined_history_df[self.label_col]
-        X_train_full['customer_id'] = X_train_full['customer_id'].astype(int)
-        X_train_full['product_id'] = X_train_full['product_id'].astype(int)
-        X_eval_full = X_train_full.copy()
-        y_eval_full = y_train_full.copy()
+        initial_dfs = []
+        for i in range(self.initial_training_weeks):
+            label_path = os.path.join(LABELS_DIR, all_label_files[i])
+            labels = pd.read_parquet(label_path)
 
-        self._create_or_update_model(X_train_full, y_train_full, X_eval_full, y_eval_full, is_full_retrain=True)
+            week_str = all_label_files[i].replace('week_labels_', '').replace('.parquet', '')
+            features_with_week = features.copy()
+            #features_with_week['week_num'] = int(week_str)
 
-        _, self.last_evaluated_f1 = self._evaluate_performance(self.model, X_eval_full, y_eval_full)
-        self._log(logging.INFO, f"Full retraining completed. New F1-score after retraining: {self.last_evaluated_f1:.4f}")
-        self._log(logging.INFO, f"Current week to predict remains at: {self.current_week_to_predict}")
+            merged_df = pd.merge(features_with_week, labels['label'], left_index=True,right_index=True, how='left')
+            merged_df[self.label_col] = merged_df[self.label_col].fillna(0).astype(int)
 
-        return self.last_evaluated_f1
+            initial_dfs.append(merged_df)
+            self.history_.append(merged_df)
+
+        combined_df = pd.concat(initial_dfs, ignore_index=True)
+        X_train_initial = combined_df.drop(columns=[self.label_col], errors='ignore')
+        X_train_initial['product_id'] = X_train_initial['product_id'].astype(int)
+        X_train_initial['customer_id'] = X_train_initial['customer_id'].astype(int)
+        y_train_initial = combined_df[self.label_col]
+
+        self._create_or_update_model(X_train_initial, y_train_initial, X_train_initial.copy(), y_train_initial.copy(), is_full_retrain=True)
+        self._log(logging.INFO, "Cold start training completed.")
+
+        
+        last_trained_week_str = all_label_files[self.initial_training_weeks - 1].replace('week_labels_', '').replace('.parquet', '')
+        last_trained_week_num = int(last_trained_week_str)
+        self.current_week_to_predict = last_trained_week_num + 1 # Suma 1 para apuntar a la próxima semana
+        self._log(logging.INFO, f"Next week for prediction initialized to: {self.current_week_to_predict}.")
 
 
     @staticmethod
