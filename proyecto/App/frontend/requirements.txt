@@ -1,0 +1,6 @@
+gradio==4.29.0
+fastapi==0.111.0
+starlette>=0.37.2
+pydantic>=2.6.4
+pandas==2.2.2
+requests==2.32.2
