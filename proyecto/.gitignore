@@ -3,6 +3,7 @@
 !/data
 !/data/raw
 !data/transactions
+!data/model_state/
 /plugins
 /logs/
 enunciado_entrega2.ipynb
