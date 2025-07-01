@@ -82,7 +82,8 @@ class IncrementalXGBoost(BaseEstimator, ClassifierMixin):
             # Este es el caso en donde si tenemos labels.
             if self.last_evaluated_f1 is not None and (self.last_evaluated_f1 - f1 > self.f1_threshold_drop):
                 self._log(logging.INFO, f"Comenzando un retrain. Diferencia anterior: {self.last_evaluated_f1 - f1 > self.f1_threshold_drop}")
-                self.full_retrain()
+                if not self.current_week_to_predict == 53:
+                    self.full_retrain()
             else:
                 self._log(logging.INFO, f"Diferencia anterior: {self.last_evaluated_f1} - {f1}")
                 self.train_incremental_and_update_history()
