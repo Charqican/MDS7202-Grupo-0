@@ -367,10 +367,10 @@ def merge_transactions():
         Merge new transactions data into the raw transactions file
     """
     airflow_home = os.environ.get('AIRFLOW_HOME', './')
-    transactions_data = os.path.join(airflow_home, 'data', 'transactions')
+    transactions_data = os.path.join(airflow_home, 'data', 'transacciones')
     raw = os.path.join(airflow_home, 'data', 'raw')
     os.makedirs(transactions_data, exist_ok=True)
-    transactions_raw_path = os.path.join(raw, 'transactions.parquet')
+    transactions_raw_path = os.path.join(raw, 'transacciones.parquet')
     transactions_raw = pd.read_parquet(transactions_raw_path)
     week_dataframes = []
     for file in os.listdir(transactions_data):
