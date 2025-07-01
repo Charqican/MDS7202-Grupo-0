@@ -42,7 +42,7 @@ class IncrementalXGBoost(BaseEstimator, ClassifierMixin):
         self.f1_threshold_drop = f1_threshold_drop
         self.reset_window_size = reset_window_size
         self.initial_training_weeks = initial_training_weeks
-        self.prediction_boundry = .5
+        self.prediction_boundry = .4
         self.xgb_params = {
             'n_estimators': n_estimators,
             'max_depth': max_depth,
@@ -218,9 +218,12 @@ class IncrementalXGBoost(BaseEstimator, ClassifierMixin):
         predictions_df['prediction_proba'] = probabilities
         predictions_df['prediction'] = (probabilities >= self.prediction_boundry).astype(int)
 
+        predictions_df_to_save = predictions_df[predictions_df['prediction'] == 1][['customer_id', 'product_id']]
+
         os.makedirs(PREDICTIONS_DIR, exist_ok=True)
-        prediction_output_path = os.path.join(PREDICTIONS_DIR, f"predictions_week_{prediction_week}.parquet")
-        predictions_df.to_parquet(prediction_output_path, index=False)
+        prediction_output_path = os.path.join(PREDICTIONS_DIR, f"predictions_week_{prediction_week}.csv")
+        predictions_df_to_save.to_csv(prediction_output_path, index=False)
+        predictions_df.to_parquet(os.path.join(PREDICTIONS_DIR, f"predictions_week_{prediction_week}.parquet"))
         self._log(logging.INFO, f"Predictions for Week {prediction_week} saved to {prediction_output_path}.")
         self._log(logging.INFO, f"Predictions generated for {len(predictions_df)} customer-product pairs for Week {prediction_week}.")
 
