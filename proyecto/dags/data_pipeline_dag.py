@@ -36,6 +36,7 @@ create_labels_from_transactions = transformations.create_labels_from_transaction
 transform_enriched_dataset = transformations.transform_enriched_dataset
 split_train_val_windows = transformations.split_train_val_windows
 save_weekly_features_labels_from_transformed = transformations.save_weekly_features_labels_from_transformed
+merge_transactions = transformations.merge_transactions
 
 # -------- DAG DEFINITION --------
 default_args = {
@@ -51,6 +52,12 @@ with DAG(
     catchup=False,
     tags=['etl', 'features', 'labels']
 ) as dag:
+
+
+    def task_merge_dataframes():
+        merge_transactions()
+
+
 
     def task_unique_pairs(**kwargs):
         path = get_unique_customer_product_pairs()
@@ -76,6 +83,12 @@ with DAG(
         transformed_enriched_path = ti.xcom_pull(task_ids='transform_features', key='transformed_path')
         result = save_weekly_features_labels_from_transformed(transformed_enriched_path)
         kwargs['ti'].xcom_push(key='saved_weekly', value=result)
+
+
+    merge_dataframes = PythonOperator(
+        task_id='merge_dataframes',
+        python_callable=task_merge_dataframes
+    )
 
     unique_pairs = PythonOperator(
         task_id='unique_pairs',
@@ -103,5 +116,5 @@ with DAG(
     )
 
     # Flujo final
-    unique_pairs >> enrich
+    merge_dataframes >> unique_pairs >> enrich
     enrich >> [transform, labels] >> save

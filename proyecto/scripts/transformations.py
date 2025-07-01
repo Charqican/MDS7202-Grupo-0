@@ -360,3 +360,26 @@ def save_weekly_features_labels_from_transformed(transformed_path: str) -> list[
 
     logger.info(f"Saved weekly features+labels datasets for {len(all_weeks)} weeks to {labels_dir}")
     return saved_paths
+
+
+def merge_transactions():
+    """
+        Merge new transactions data into the raw transactions file
+    """
+    airflow_home = os.environ.get('AIRFLOW_HOME', './')
+    transactions_data = os.path.join(airflow_home, 'data', 'transactions')
+    raw = os.path.join(airflow_home, 'data', 'raw')
+    os.makedirs(transactions_data, exist_ok=True)
+    transactions_raw_path = os.path.join(raw, 'transactions.parquet')
+    transactions_raw = pd.read_parquet(transactions_raw_path)
+    week_dataframes = []
+    for file in os.listdir(transactions_data):
+        file_path = os.path.join(transactions_data, file)
+        if os.path.isfile(file_path):
+            week_dataframes.append(pd.read_parquet(file_path))
+    
+    if len(week_dataframes) != 0:
+        transactions_raw = pd.concat([transactions_raw]+week_dataframes)
+        transactions_raw.to_parquet(transactions_raw_path)
+            
+            
