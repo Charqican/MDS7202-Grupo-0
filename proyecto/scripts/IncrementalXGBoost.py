@@ -42,7 +42,7 @@ class IncrementalXGBoost(BaseEstimator, ClassifierMixin):
         self.f1_threshold_drop = f1_threshold_drop
         self.reset_window_size = reset_window_size
         self.initial_training_weeks = initial_training_weeks
-        self.prediction_boundry = .4
+        self.prediction_boundry = .5
         self.xgb_params = {
             'n_estimators': n_estimators,
             'max_depth': max_depth,
@@ -96,12 +96,19 @@ class IncrementalXGBoost(BaseEstimator, ClassifierMixin):
     def _log(self, level, message):
         logger.log(level, f"[{self.__class__.__name__}] {message}")
 
+
     def _create_or_update_model(self, X_train: pd.DataFrame, y_train: pd.Series, 
                                 X_eval: pd.DataFrame = None, y_eval: pd.Series = None, 
                                 is_full_retrain: bool = False) -> XGBClassifier:
-        
+
         self._log(logging.INFO, f"Initiating XGBoost training/update. Train shape: {X_train.shape}, Eval shape: {X_eval.shape}")
-        
+
+        # Ajustamos el peso si está en modo auto (usando -1 como señal)
+        if self.xgb_params['scale_pos_weight'] == -1:
+            spw = self._compute_scale_pos_weight(y_train)
+            self.xgb_params['scale_pos_weight'] = spw
+            self._log(logging.INFO, f"Calculated scale_pos_weight: {spw:.4f}")
+
         fit_params = {
             'eval_set': [(X_eval, y_eval)],
         }
@@ -112,7 +119,7 @@ class IncrementalXGBoost(BaseEstimator, ClassifierMixin):
             self.model.fit(X_train, y_train, **fit_params)
         else:
             self._log(logging.INFO, "Incrementally updating existing XGBoost model.")
-            self.model.fit(X_train, y_train, xgb_model=self.model.get_booster(), **fit_params) 
+            self.model.fit(X_train, y_train, xgb_model=self.model.get_booster(), **fit_params)
 
         self._log(logging.INFO, "XGBoost training/update completed.")
         return self.model
@@ -223,7 +230,7 @@ class IncrementalXGBoost(BaseEstimator, ClassifierMixin):
 
         os.makedirs(PREDICTIONS_DIR, exist_ok=True)
         prediction_output_path = os.path.join(PREDICTIONS_DIR, f"predictions_week_{prediction_week}.csv")
-        predictions_df_to_save.to_csv(prediction_output_path, index=False)
+        predictions_df_to_save.to_csv(prediction_output_path, index=False, header=False)
         predictions_df.to_parquet(os.path.join(PREDICTIONS_DIR, f"predictions_week_{prediction_week}.parquet"))
         self._log(logging.INFO, f"Predictions for Week {prediction_week} saved to {prediction_output_path}.")
         self._log(logging.INFO, f"Predictions generated for {len(predictions_df)} customer-product pairs for Week {prediction_week}.")
@@ -387,6 +394,15 @@ class IncrementalXGBoost(BaseEstimator, ClassifierMixin):
         last_trained_week_num = int(last_trained_week_str)
         self.current_week_to_predict = last_trained_week_num + 1 # Suma 1 para apuntar a la próxima semana
         self._log(logging.INFO, f"Next week for prediction initialized to: {self.current_week_to_predict}.")
+
+
+    def _compute_scale_pos_weight(self, y: pd.Series) -> float:
+        num_pos = (y == 1).sum()
+        num_neg = (y == 0).sum()
+        if num_pos == 0:
+            return 1.0
+        return num_neg / num_pos
+
 
 
     @staticmethod
