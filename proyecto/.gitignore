@@ -2,7 +2,7 @@
 /data/*
 !/data
 !/data/raw
-!data/transactions
+!data/transacciones
 !data/model_state/
 /plugins
 /logs/
