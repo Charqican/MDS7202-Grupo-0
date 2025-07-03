@@ -57,8 +57,6 @@ with DAG(
     def task_merge_dataframes():
         merge_transactions()
 
-
-
     def task_unique_pairs(**kwargs):
         path = get_unique_customer_product_pairs()
         kwargs['ti'].xcom_push(key='pairs_path', value=path)

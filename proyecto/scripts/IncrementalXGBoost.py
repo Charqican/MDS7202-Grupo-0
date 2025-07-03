@@ -12,7 +12,6 @@ from datetime import datetime, timedelta
 import dill
 import time
 
-
 def get_data_base_path():
     airflow_home = os.environ.get('AIRFLOW_HOME')
     if airflow_home:
@@ -32,12 +31,12 @@ CURRENT_PREDICTION_WEEK_FILE = os.path.join(get_data_base_path(), 'model_state/c
 PREDICTIONS_DIR = os.path.join(get_data_base_path(), 'predictions')
 
 class IncrementalXGBoost(BaseEstimator, ClassifierMixin):
-    def __init__(self, f1_threshold_drop: float = 0.1,
+    def __init__(self, f1_threshold_drop: float = 0.2,
                  reset_window_size: int = 8, 
                  initial_training_weeks: int = 8, 
                  max_depth: int = 6, n_estimators: int = 100, learning_rate: float = 0.1,
                  early_stopping_rounds: int = 12,
-                 scale_pos_weight: float = 1.0): 
+                 scale_pos_weight: float = 1): 
         
         self.f1_threshold_drop = f1_threshold_drop
         self.reset_window_size = reset_window_size
@@ -52,12 +51,13 @@ class IncrementalXGBoost(BaseEstimator, ClassifierMixin):
             'tree_method': 'auto',
             'early_stopping_rounds': early_stopping_rounds,
             'scale_pos_weight': scale_pos_weight,
-            'n_jobs': -1 
+            'n_jobs': -1,
+            'verbose' : 0
         }
         
         self.model: XGBClassifier = None 
         self.history_: deque = deque(maxlen=reset_window_size) 
-        self.last_evaluated_f1: float = None 
+        self.last_evaluated_f1: list[float] = [] 
         self.label_col: str = 'label' 
         self.current_week_to_predict = 0
 
@@ -80,15 +80,23 @@ class IncrementalXGBoost(BaseEstimator, ClassifierMixin):
                 break
             
             # Este es el caso en donde si tenemos labels.
-            if self.last_evaluated_f1 is not None and (self.last_evaluated_f1 - f1 > self.f1_threshold_drop):
-                self._log(logging.INFO, f"Comenzando un retrain. Diferencia anterior: {self.last_evaluated_f1 - f1 > self.f1_threshold_drop}")
-                if not self.current_week_to_predict == 53:
+            if len(self.last_evaluated_f1) == 2:
+
+                if (self.last_evaluated_f1[0] - self.last_evaluated_f1[1]) > (.1) \
+                    and (f1 < self.last_evaluated_f1[1]) \
+                    or ((self.last_evaluated_f1[0] + self.last_evaluated_f1[1]) < 0.4):
+
+                    self._log(logging.INFO, f"Comenzando un retrain. Scores: {self.last_evaluated_f1[0]} - {self.last_evaluated_f1[1]} - {f1}")
                     self.full_retrain()
             else:
                 self._log(logging.INFO, f"Diferencia anterior: {self.last_evaluated_f1} - {f1}")
                 self.train_incremental_and_update_history()
             
-            self.last_evaluated_f1 = f1
+            if len(self.last_evaluated_f1)  == 2:
+                self.last_evaluated_f1[0], self.last_evaluated_f1[1]  = self.last_evaluated_f1[1], f1
+            else : 
+                self.last_evaluated_f1.append(f1)
+            
             self.current_week_to_predict += 1  # Avanza a la próxima semana
 
 
@@ -109,20 +117,71 @@ class IncrementalXGBoost(BaseEstimator, ClassifierMixin):
             self.xgb_params['scale_pos_weight'] = spw
             self._log(logging.INFO, f"Calculated scale_pos_weight: {spw:.4f}")
 
-        fit_params = {
-            'eval_set': [(X_eval, y_eval)],
-        }
+        if is_full_retrain:
+            self._full_incremental_retrain_from_history()
 
-        if is_full_retrain or self.model is None:
-            self.model = XGBClassifier(**self.xgb_params)
-            self._log(logging.INFO, "New XGBoost model created for full retraining or cold start.")
-            self.model.fit(X_train, y_train, **fit_params)
         else:
-            self._log(logging.INFO, "Incrementally updating existing XGBoost model.")
-            self.model.fit(X_train, y_train, xgb_model=self.model.get_booster(), **fit_params)
+            fit_params = {
+                'eval_set': [(X_eval, y_eval)],
+            }
+
+            if self.model is None:
+                self.model = XGBClassifier(**self.xgb_params)
+                self._log(logging.INFO, "New XGBoost model created for cold start.")
+                self.model.fit(X_train, y_train, **fit_params)
+
+            else:
+                self._log(logging.INFO, "Incrementally updating existing XGBoost model.")
+                self.model.fit(X_train, y_train, xgb_model=self.model.get_booster(), **fit_params)
 
         self._log(logging.INFO, "XGBoost training/update completed.")
         return self.model
+
+
+    def _full_incremental_retrain_from_history(self):
+        """
+        Performs a full retraining by iterating week-by-week through the history_.
+        First week uses fit(), subsequent weeks use incremental fit via xgb_model.
+        """
+        self._log(logging.INFO, "Starting full incremental retraining from weekly history.")
+
+        features_path = os.path.join(FEATURES_DIR, 'transformed_enriched.parquet')
+        if not os.path.exists(features_path):
+            raise FileNotFoundError(f"Features file not found at {features_path}")
+
+        features = pd.read_parquet(features_path)
+
+        first_week = True
+        for week_num in self.history_:
+            label_path = os.path.join(LABELS_DIR, f"week_labels_{week_num}.parquet")
+            if not os.path.exists(label_path):
+                self._log(logging.WARNING, f"Label file not found for week {week_num}. Skipping.")
+                continue
+
+            labels = pd.read_parquet(label_path)
+            merged_df = pd.merge(features.copy(), labels['label'], left_index=True, right_index=True, how='left')
+            merged_df[self.label_col] = merged_df[self.label_col].fillna(0).astype(int)
+
+            X_train = merged_df.drop(columns=[self.label_col])
+            y_train = merged_df[self.label_col]
+            X_train['customer_id'] = X_train['customer_id'].astype(int)
+            X_train['product_id'] = X_train['product_id'].astype(int)
+
+            # Ajustar peso de clases si es necesario
+            if self.xgb_params['scale_pos_weight'] == -1:
+                self.xgb_params['scale_pos_weight'] = self._compute_scale_pos_weight(y_train)
+
+            if first_week or self.model is None:
+                self.model = XGBClassifier(**self.xgb_params)
+                self._log(logging.INFO, f"Training from zero until week {week_num}")
+                self.model.fit(X_train, y_train, eval_set=[(X_train, y_train)])
+
+                first_week = False
+            else:
+                self._log(logging.INFO, f"Incremental re-training using week {week_num}")
+                self.model.fit(X_train, y_train, xgb_model=self.model.get_booster(), eval_set=[(X_train, y_train)])
+
+
 
 
     def _early_stopping_callback(self, env):
@@ -155,7 +214,7 @@ class IncrementalXGBoost(BaseEstimator, ClassifierMixin):
         combined_dfs = []
 
         for week_num in self.history_:
-            week_num = int(week_num)  # Asegura que sea entero
+         # Asegura que sea entero
             label_path = os.path.join(LABELS_DIR, f"week_labels_{week_num}.parquet")
             if not os.path.exists(label_path):
                 self._log(logging.WARNING, f"Label file not found for week {week_num}. Skipping.")
@@ -184,7 +243,7 @@ class IncrementalXGBoost(BaseEstimator, ClassifierMixin):
         self._create_or_update_model(X_train, y_train, X_train.copy(), y_train.copy(), is_full_retrain=True)
 
         _, self.last_evaluated_f1 = self._evaluate_performance(self.model, X_train, y_train)
-        self._log(logging.INFO, f"Full retraining completed. New F1-score after retraining: {self.last_evaluated_f1:.4f}")
+        self._log(logging.INFO, f"Full retraining completed. New F1-score after retraining: {self.last_evaluated_f1[1]:.4f}")
         self._log(logging.INFO, f"Current week to predict remains at: {self.current_week_to_predict}")
 
         return self.last_evaluated_f1
@@ -239,7 +298,7 @@ class IncrementalXGBoost(BaseEstimator, ClassifierMixin):
 
 
     def _evaluate_performance(self, model: XGBClassifier, X: pd.DataFrame, y: pd.Series) -> tuple[float, float]:
-        if self.last_evaluated_f1 is None:
+        if len(self.last_evaluated_f1) == 0:
             self._log(logging.INFO, "Previous F1 is None - cold start -. Skipping retraining logic.")
             # En cold start no avanzamos la semana automáticamente aquí, porque no tenemos contexto.
             # Se asume que esto se maneja fuera, o en initial_train.
@@ -386,10 +445,9 @@ class IncrementalXGBoost(BaseEstimator, ClassifierMixin):
         X_train_initial['customer_id'] = X_train_initial['customer_id'].astype(int)
         y_train_initial = combined_df[self.label_col]
 
-        self._create_or_update_model(X_train_initial, y_train_initial, X_train_initial.copy(), y_train_initial.copy(), is_full_retrain=True)
+        self._create_or_update_model(X_train_initial, y_train_initial, X_train_initial.copy(), y_train_initial.copy(), is_full_retrain=False)
         self._log(logging.INFO, "Cold start training completed.")
 
-        
         last_trained_week_str = all_label_files[self.initial_training_weeks - 1].replace('week_labels_', '').replace('.parquet', '')
         last_trained_week_num = int(last_trained_week_str)
         self.current_week_to_predict = last_trained_week_num + 1 # Suma 1 para apuntar a la próxima semana
