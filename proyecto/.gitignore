@@ -4,10 +4,15 @@
 !/data/raw
 !data/transacciones
 !data/model_state/
+data/predictions
+data/transacciones
 /plugins
 /logs/
+/data/raw
 enunciado_entrega2.ipynb
-
+entrega3
+entrega3.ipynb
+*.zip
 test.ipynb
 videodags.mp4
 __pycache__

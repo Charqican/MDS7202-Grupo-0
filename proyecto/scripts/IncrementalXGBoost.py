@@ -31,10 +31,10 @@ CURRENT_PREDICTION_WEEK_FILE = os.path.join(get_data_base_path(), 'model_state/c
 PREDICTIONS_DIR = os.path.join(get_data_base_path(), 'predictions')
 
 class IncrementalXGBoost(BaseEstimator, ClassifierMixin):
-    def __init__(self, f1_threshold_drop: float = 0.2,
+    def __init__(self, f1_threshold_drop: float = 0.1,
                  reset_window_size: int = 8, 
                  initial_training_weeks: int = 8, 
-                 max_depth: int = 6, n_estimators: int = 100, learning_rate: float = 0.1,
+                 max_depth: int = 12, n_estimators: int = 130, learning_rate: float = 0.1,
                  early_stopping_rounds: int = 12,
                  scale_pos_weight: float = 1): 
         
@@ -71,32 +71,27 @@ class IncrementalXGBoost(BaseEstimator, ClassifierMixin):
                 self._log(logging.INFO, f"No labels found for week {self.current_week_to_predict}. Ending backlog training.")
                 break
 
-            
             f1 = self.evaluate_and_detect_drift()
-
             # Est es el caso sin labels
             if f1 is None:
                 self._log(logging.WARNING, f"Evaluation could not be completed for week {self.current_week_to_predict}. Skipping training.")
                 break
             
             # Este es el caso en donde si tenemos labels.
-            if len(self.last_evaluated_f1) == 2:
-
-                if (self.last_evaluated_f1[0] - self.last_evaluated_f1[1]) > (.1) \
-                    and (f1 < self.last_evaluated_f1[1]) \
-                    or ((self.last_evaluated_f1[0] + self.last_evaluated_f1[1]) < 0.4):
-
-                    self._log(logging.INFO, f"Comenzando un retrain. Scores: {self.last_evaluated_f1[0]} - {self.last_evaluated_f1[1]} - {f1}")
-                    self.full_retrain()
+            # Evaluamos para data drift
+            if len(self.last_evaluated_f1) == 2 and ((self.last_evaluated_f1[0] - self.last_evaluated_f1[1]) > self.f1_threshold_drop) and (f1 < self.last_evaluated_f1[0]):
+                self._log(logging.INFO, f"Comenzando un retrain. Scores: {self.last_evaluated_f1[0]} - {self.last_evaluated_f1[1]} - {f1}")
+                self.full_retrain()
+                
             else:
                 self._log(logging.INFO, f"Diferencia anterior: {self.last_evaluated_f1} - {f1}")
                 self.train_incremental_and_update_history()
             
-            if len(self.last_evaluated_f1)  == 2:
+            if len(self.last_evaluated_f1) == 2:
                 self.last_evaluated_f1[0], self.last_evaluated_f1[1]  = self.last_evaluated_f1[1], f1
-            else : 
+            else: 
                 self.last_evaluated_f1.append(f1)
-            
+                
             self.current_week_to_predict += 1  # Avanza a la próxima semana
 
 
@@ -242,8 +237,9 @@ class IncrementalXGBoost(BaseEstimator, ClassifierMixin):
 
         self._create_or_update_model(X_train, y_train, X_train.copy(), y_train.copy(), is_full_retrain=True)
 
-        _, self.last_evaluated_f1 = self._evaluate_performance(self.model, X_train, y_train)
-        self._log(logging.INFO, f"Full retraining completed. New F1-score after retraining: {self.last_evaluated_f1[1]:.4f}")
+        _, f1 = self._evaluate_performance(self.model, X_train, y_train)
+        self.last_evaluated_f1 = [f1]
+        self._log(logging.INFO, f"Full retraining completed. New F1-score after retraining: {self.last_evaluated_f1[0]:.4f}")
         self._log(logging.INFO, f"Current week to predict remains at: {self.current_week_to_predict}")
 
         return self.last_evaluated_f1
@@ -437,7 +433,7 @@ class IncrementalXGBoost(BaseEstimator, ClassifierMixin):
             merged_df[self.label_col] = merged_df[self.label_col].fillna(0).astype(int)
 
             initial_dfs.append(merged_df)
-            self.history_.append(merged_df)
+            self.history_.append(i)
 
         combined_df = pd.concat(initial_dfs, ignore_index=True)
         X_train_initial = combined_df.drop(columns=[self.label_col], errors='ignore')

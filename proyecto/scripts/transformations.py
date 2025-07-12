@@ -183,6 +183,8 @@ def create_labels_from_transactions() -> str:
     """
     Genera etiquetas semanales (0/1) a partir de transacciones históricas.
     Solo incluye combinaciones (cliente, producto, semana) que hayan ocurrido.
+    Las semanas se cuentan en bloques de 7 días desde 2024-01-01, y si al final queda una semana incompleta,
+    se agrupa con la semana anterior.
     
     Returns:
         str: Ruta al archivo Parquet con las etiquetas generadas.
@@ -193,17 +195,33 @@ def create_labels_from_transactions() -> str:
     
     df_trans = pd.read_parquet(trans_path)
 
-    # Formateo de columnas
+    # Formateo
     df_trans['customer_id'] = df_trans['customer_id'].astype(str)
     df_trans['product_id'] = df_trans['product_id'].astype(str)
     df_trans['purchase_date'] = pd.to_datetime(df_trans['purchase_date'])
 
-    # Calcular semana calendario
-    base_date = pd.Timestamp('2024-01-01')
-    df_trans['week_num'] = ((df_trans['purchase_date'] - base_date).dt.days // 7 + 1).astype(int)
-    logger.info(f"Transactions span {df_trans['week_num'].nunique()} unique weeks.")
+    # Ordenamos por fecha para asegurar secuencia
+    df_trans = df_trans.sort_values('purchase_date').reset_index(drop=True)
 
-    # Agrupar para obtener la etiqueta
+    # Fecha base
+    base_date = pd.Timestamp('2024-01-01')
+    df_trans['days_since_start'] = (df_trans['purchase_date'] - base_date).dt.days
+
+    # Asignar semana como floor(days/7)
+    df_trans['week_num'] = (df_trans['days_since_start'] // 7).astype(int)
+
+    # Verificar si la última semana tiene < 7 días, y unirla con la anterior si es así
+    max_week = df_trans['week_num'].max()
+    last_week_dates = df_trans[df_trans['week_num'] == max_week]['purchase_date'].nunique()
+
+    if last_week_dates < 7:
+        logger.info(f"Última semana ({max_week}) tiene solo {last_week_dates} días. Será fusionada con la semana anterior.")
+        df_trans.loc[df_trans['week_num'] == max_week, 'week_num'] = max_week - 1
+
+    # Renumerar semanas para que partan desde 1
+    df_trans['week_num'] = df_trans['week_num'] - df_trans['week_num'].min() + 1
+
+    # Agrupación para obtener etiquetas
     df_labels = (
         df_trans
         .groupby(['customer_id', 'product_id', 'week_num'], as_index=False)
@@ -213,6 +231,7 @@ def create_labels_from_transactions() -> str:
     df_labels['label'] = (df_labels['items_sum'] > 0).astype(int)
     df_labels.drop(columns=['items_sum'], inplace=True)
 
+    # Guardar
     out_path = os.path.join(processed_dir, 'weekly_labels.parquet')
     os.makedirs(processed_dir, exist_ok=True)
     df_labels.to_parquet(out_path, index=False)
